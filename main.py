@@ -7,6 +7,29 @@ import sys
 MIN_MATCH_COUNT = 8
 DISTANCE_RATIO = 0.7
 
+# TODO General process:
+#
+#  Loop through images
+#for every frame i and i+1, do the following:
+#    ##sfm
+#    kpmatches = Sift/surf matching
+#    get Fundamental Matrix for matches
+#    get Essential matrix from fundatmental matrix
+#    get Rt from Essential matrix
+#
+#    Triangulate points and add to 3d model
+#    bundle adjustment (?) >>> combining multiple sets of 3d points?????///?/?/?
+#    sparse cloud at this point
+#
+#    #mvs
+#    optimization /remove outliers
+#    >>> sparse points at this point
+#    make point cloud dense (?) with mvs black magic
+#        --> maybe can use library for this bit
+#
+#    generate ply file for visualization
+
+
 def main():
     # Get video input
     if (len(sys.argv) != 2):
