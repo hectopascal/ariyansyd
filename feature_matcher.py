@@ -19,7 +19,7 @@ LOG_FORMAT = '%(asctime)s - %(name)s - %(threadName)s -  %(levelname)s - %(messa
 def get_args():
     parser = argparse.ArgumentParser(description='Extract features and descriptors from image file(s)')
     parser.add_argument('source', type=str, help='source folder')
-    parser.add_argument('--detector', type=str, default='SIFT', help='Feature detector type')
+    parser.add_argument('--detector', type=str, default='SURF', help='Feature detector type')
     parser.add_argument('--matcher', type=str, default='flann', help='Matching type')
     parser.add_argument('--log_level', type=int, default=10, help='logging level (0-50)')
     args = parser.parse_args()
@@ -46,7 +46,7 @@ class FeatureMatcher(object):
         self._features = dict()
         self._descriptors = dict()
 
-    def _get_detector(self, detector='SIFT'):
+    def _get_detector(self, detector='SURF'):
         logging.debug("detector {}".format(detector))
         if detector == 'SIFT':
             return cv2.xfeatures2d.SIFT_create()
@@ -83,11 +83,10 @@ class FeatureMatcher(object):
         else:
             raise ValueError("Invalid matching type {}".format(matcher))
 
-    def extract(self, image_name, image_data=None):
-        if image_name not in self._features:
-            if not image_data:
+    def extract(self, image_name, image_data=None, draw=False):
+        if not image_data:
                 image_data = cv2.imread(image_name, cv2.IMREAD_GRAYSCALE)
-
+        if image_name not in self._features:
             feature_file = '{}.{}.feat'.format(image_name, self.detector_type)
             descriptor_file = '{}.{}.desc'.format(image_name, self.detector_type)
 
@@ -123,11 +122,17 @@ class FeatureMatcher(object):
                     pickle.dump(self._descriptors[image_name], fd)
                 logging.info("Saved descriptors to {}".format(descriptor_file))
 
+        if draw:
+            draw_file = '{}.{}.keypoints.jpg'.format(image_name, self.detector_type)
+            if not os.path.exists(draw_file):
+                draw_image = cv2.drawKeypoints(image_data, self._features[image_name], None)
+                cv2.imwrite(draw_file, draw_image)
+
         return self._features[image_name], self._descriptors[image_name], image_data
         
-    def cross_match(self, image1_name, image2_name, image1_data=None, image2_data=None, good_ratio=0.8, normalise=False):
-        keypoints1, descriptors1, image1_data = self.extract(image1_name, image1_data)
-        keypoints2, descriptors2, image2_data = self.extract(image2_name, image2_data)
+    def cross_match(self, image1_name, image2_name, image1_data=None, image2_data=None, good_ratio=0.8, normalise=False, draw=False):
+        keypoints1, descriptors1, image1_data = self.extract(image1_name, image1_data, draw=draw)
+        keypoints2, descriptors2, image2_data = self.extract(image2_name, image2_data, draw=draw)
 
         # find good matches in image 1
         matches1 = self.matcher.knnMatch(descriptors1, descriptors2, 2)
@@ -165,7 +170,20 @@ class FeatureMatcher(object):
                 very_good_keypoints_1[idx] = np.array(pt1)
                 very_good_keypoints_2[idx] = np.array(pt2)
 
-        return very_good_keypoints_1, very_good_keypoints_2
+        # Use RANSAC to find inliers
+        retval, mask = cv2.findHomography(very_good_keypoints_1, very_good_keypoints_2, cv2.RANSAC, 100.0)
+        mask = mask.ravel()
+        r1, r2 = very_good_keypoints_1[mask == 1], very_good_keypoints_2[mask == 1]
+
+        if draw:
+            draw_file = 'matches.{}-{}.{}.jpg'.format(os.path.split(image1_name)[1], os.path.split(image2_name)[1], self.detector_type)
+            draw_file = os.path.join(os.path.split(image1_name)[0], draw_file)
+            if not os.path.exists(draw_file):
+                draw_image = cv2.drawMatches(image1_data, [cv2.KeyPoint(x=r[0], y=r[1], _size=1) for r in r1], 
+                                             image2_data, [cv2.KeyPoint(x=r[0], y=r[1], _size=1) for r in r2], 
+                                             [cv2.DMatch(x, x, 1) for x in range(len(r1))], None)
+                cv2.imwrite(draw_file, draw_image)
+        return r1, r2
 
     def process(self, files):
         image1 = None
@@ -179,8 +197,8 @@ class FeatureMatcher(object):
                 continue
             image2 = image1
             image1 = file
-            print("Processing {} and {}".format(image1, image2))
-            kp1, kp2, good = self.cross_match(image1, image2)
+            print("Processing {} and {}".format(image2, image1))
+            kp1, kp2 = self.cross_match(image2, image1, draw=True)
 
 
 def main():

@@ -16,16 +16,29 @@ LOG_FORMAT = '%(asctime)s - %(name)s - %(threadName)s -  %(levelname)s - %(messa
 
 
 def normalise_keypoints(kp):
-    """
+    """ Apply a normalising transformation (translation and scaling)
 
-    :param kp:
-    :return:
+    According to HZ p282 - normalization and saling of each image 
+    so that the centroid of the reference points is at the origin of the coordinates
+    and the RMS distance of the points from the origin is equal to sqrt(2)
+
+    (this is formulated in slide 13 of 
+    https://www.cs.auckland.ac.nz/courses/compsci773s1t/lectures/773-GGpdfs/773GG-FundMatrix-A.pdf)
+
+    :param kp: ndarray of homogeneous keypoints
+    :return: normalised keypoints and the translation matrix (for denomalising later)
     """
     kp = kp / kp[2]
-    kp_mean = np.mean(kp[:2], axis=1)
+    centre = np.mean(kp[:2], axis=1)
+
+    # scaling
     s = np.sqrt(2) / np.std(kp[:2])
-    t = np.array([[s, 0, -s*kp_mean[0]], [0, s, -s * kp_mean[1]], [0, 0, 1]])
-    return np.dot(t, kp)
+    
+    # translation
+    t = np.array([[s, 0, -s*centre[0]],
+                  [0, s, -s*centre[1]],
+                  [0, 0, 1]])
+    return np.dot(t, kp), t
 
 
 def fundamental_error(f, kp1, kp2):
@@ -46,22 +59,26 @@ def fundamental_error(f, kp1, kp2):
     return error.flatten()
 
 
-def keypoints_to_fundamental(kp1, kp2, normalise=False, optimise=True):
+def keypoints_to_fundamental(kp1, kp2, normalise=True, optimise=True):
     ''' compute the fundamental matrix based on 8 point algorithm
 
-    :param kp1:
-    :param kp2:
-    :param normalise:
-    :param optimise:
+    now with normalization on the keypoints
+    (see HZ Algorithm 11.1
+    and/or https://www.cs.unc.edu/~marc/tutorial/node54.html)
+
+    :param kp1: keypoints in image 1
+    :param kp2: keypoints in image 2
+    :param normalise: Apply normalising transform
+    :param optimise: 
     :return:
     '''
     assert (kp1.shape == kp2.shape)
     if normalise:
-        kp1 = normalise_keypoints(kp1)
-        kp2 = normalise_keypoints(kp2)
-    n = kp1.shape[1]
-    A = np.zeros((n, 9))
-
+        kp1, T1 = normalise_keypoints(kp1)
+        kp2, T2 = normalise_keypoints(kp2)
+    
+    # as per HZ eq 11.3
+    A = np.zeros((kp1.shape[1], 9))
     A[:, 0] = np.transpose(kp2[0, :]) * (kp1[0, :])
     A[:, 1] = np.transpose(kp2[0, :]) * (kp1[1, :])
     A[:, 2] = np.transpose(kp2[0, :])
@@ -70,17 +87,24 @@ def keypoints_to_fundamental(kp1, kp2, normalise=False, optimise=True):
     A[:, 5] = np.transpose(kp2[1, :])
     A[:, 6] = np.transpose(kp1[0, :])
     A[:, 7] = np.transpose(kp1[1, :])
-    A[:, 8] = np.ones(n)
+    A[:, 8] = np.ones(kp1.shape[1])
 
-    # compute the linear least square solution
-    U, S, Vh = linalg.svd(A)
-    V = np.transpose(Vh)
-    F = V[-1].reshape(3, 3)
+    # compute F from the smallest singular value of A (linear solution)
+    U, S, Vt = linalg.svd(A)
+    V = np.transpose(Vt)
+    F = V[:,8].reshape(3, 3)
 
-    # ensure F is of rank 2 by zeroing out last singular value
-    U, S, V = linalg.svd(F)
+    # ensure F is of rank 2 by zeroing out last singular value (constraing enforcement)
+    U, S, Vt = linalg.svd(F)
     S[2] = 0
-    F = np.dot(U, np.dot(np.diag(S), V))
+    F = np.dot(U, np.dot(np.diag(S), Vt))
+
+    if normalise:
+        # denormalise
+        F = np.dot(T1.T, np.dot(F, T2))
+        F = F/F[2,2]
+
+    logging.info("Initial estimate of F {}".format(F))
 
     if optimise:
         # Optimize initial estimate using the algebraic error
@@ -94,12 +118,14 @@ def keypoints_to_fundamental(kp1, kp2, normalise=False, optimise=True):
                         [f[6], -(-f[0] * f[4] + f[6] * f[2] * f[4] + f[3] * f[1] - f[6] * f[1] * f[5]) /
                          (-f[3] * f[2] + f[0] * f[5]), 1]])
         F = f / np.sum(np.sum(f))*9
+        logging.info("Optimised F by algebraic error {}".format(F))
+
     return F
 
 
 def fundamental_to_epipole(F):
     ''' Compute the epipole that satisfies Fe = 0
-
+        (Use with F.T for left epipole.)
     :param F: fundamental matrix
     :return: epipole (null space of F)
     '''
@@ -112,7 +138,7 @@ def skew(e):
     """ Find the skew matrix Se
 
     :param e: epiople
-    :return: the skew matrix
+    :return: a 3x3 skew symmetric matrix from *e*
     """
     return np.array([[0, -e[2], e[1]],
                     [e[2], 0, -e[0]],
@@ -131,44 +157,8 @@ def compute_homography(epipole, F):
     return H
 
 
-def reference_plane_error(ref_plane, H, e):
-    """ based on pyrec3d
-
-    :param ref_plane:
-    :param H:
-    :param e:
-    :return:
-    """
-    epi = np.reshape(e, (3, 1))
-    ref_plane = np.reshape(ref_plane, (1, 4))
-    t = np.reshape(ref_plane[0,0:3], (1, 3))
-    return np.sum(np.sum(np.abs(H + epi.dot(t) - ref_plane[0,3]*np.eye(3))))
-
-
-def estimate_projection(H, e2, ref_plane):
-    """ Estimate projection matrices for two views
-
-    based on pyrec3d
-
-    P1=[I | 0], P2=[H+epi1|e])
-
-    :param H: homography [e]x[F]
-    :param e2: epipole in 2nd view
-    :param ref_plane: the reference plane at infinity
-    :return: P1, P2
-    """
-    P1 = np.array([[1,0,0,0],[0,1,0,0],[0,0,1,0]])
-
-    P2 = np.zeros((3, 4))
-    P2[:, :3] = H + np.dot(np.reshape(e2, (3, 1)), np.reshape(ref_plane, (1, 3)))
-    P2[:, 3] = e2
-    P2 = P2/P2[2, 2]
-
-    return P1, P2
-
-
 def triangulate_point(kp1, kp2, P1, P2):
-    """ from py3drec
+    """ triangulate keypoints using DLT (HZ Chapter 12.2)
 
     :param kp1: normalised 2d feature coordinates in view 1
     :param kp2: normalised 2d feature coordinates in view 2
@@ -176,70 +166,108 @@ def triangulate_point(kp1, kp2, P1, P2):
     :param P2: projection matrix in view 2
     :return: triangulated 3d points
     """
+    # M = np.zeros((6, 6))
+    # M[:3, :4] = P1
+    # M[3:, :4] = P2
+    # M[:3, 4] = -kp1
+    # M[3:, 5] = -kp2
+    # U, S, V = linalg.svd(M)
+    # X = V[-1, :4]
+    # return X / X[3]
+
     A = np.zeros((4, 4))
     A[0, :] = P1[2, :] * kp1[0] - P1[0, :]
     A[1, :] = P1[2, :] * kp1[1] - P1[1, :]
     A[2, :] = P2[2, :] * kp2[0] - P2[0, :]
     A[3, :] = P2[2, :] * kp2[1] - P2[1, :]
 
-    U, s, Vh = linalg.svd(A)
+    _, _, Vh = linalg.svd(A)
     V = np.transpose(Vh)
     feature_3d = V[:, V.shape[0] - 1]
     feature_3d = feature_3d / feature_3d[3]
     return feature_3d
 
 
+def points_to_ply(points, ply_file):
+    with open(ply_file, 'w') as fd:
+        fd.write('ply\nformat ascii 1.0\nelement vertex {}\n'
+                 'property float x\nproperty float y\nproperty float z\n'
+                 'end_header\n'.format(len(points)))
+        for x, y, z, w in points:
+            fd.write('{} {} {}\n'.format(x, y, z))
+
+
+def estimate_projection_matrices(F):
+    """Estimate the projection matrices from the Fundamental Matrix
+    
+    A pair of camera matrices P1 and P2 corresponding to the fundamental matrix F are 
+    easily computed using the direct formula in result HZ 9.14
+    
+    Arguments:
+        F {[type]} -- [description]
+    """
+    e1 = fundamental_to_epipole(F)
+    e2 = fundamental_to_epipole(F.T)
+    print(e1)
+    print(e2)
+    P1 = np.array([[1,0,0,0],
+                   [0,1,0,0],
+                   [0,0,1,0]])
+    Te = skew(e2)
+
+    P2 = np.vstack((np.dot(Te, F.T).T, e2)).T
+
+    logging.info("Initial projection matrix: {}".format(P2))
+    return P1, P2, e1, e2
+
+
+def triangulate_points(kp1, kp2, P1, P2):
+    point_cloud = []
+    for i in range(kp1.shape[1]):
+        point = triangulate_point(kp1[:, i], kp2[:, i], P1, P2)
+        point_cloud.append(point)
+    return point_cloud
+
+
 def uncalibrated_sfm(frame_names):
 
     fm = FeatureMatcher()
 
-    image1_name = frame_names[0]
-    image2_name = frame_names[1]
+    frame1 = 3
+    frame2 = 4
+    image1_name = frame_names[frame1]
+    image2_name = frame_names[frame2]
 
     kp1, kp2 = fm.cross_match(image1_name, image2_name, normalise=True)
+    logging.info("Keypoints matched: {}".format(kp1.shape[0]))
     kp1_homo = cv2.convertPointsToHomogeneous(kp1).reshape(kp1.shape[0], 3).T
     kp2_homo = cv2.convertPointsToHomogeneous(kp2).reshape(kp2.shape[0], 3).T
 
-    num_keypoints = kp1.shape[0]
-    logging.info("Keypoints matched: {}".format(num_keypoints))
+    logging.info("Estimating Fundamental Matrix from correspondences")
+    F = keypoints_to_fundamental(kp1_homo, kp2_homo, optimise=True)
+    
+    logging.info("Estimating Projection Matrices from Fundamental Matrix")
+    P1, P2, e1, e2 = estimate_projection_matrices(F)
 
-    logging.info("Computing Fundamental Matrix")
-    F = keypoints_to_fundamental(kp1_homo, kp2_homo)
-    e1 = fundamental_to_epipole(F)
-    e2 = fundamental_to_epipole(F.T)
+    logging.info("Triangulating")
+    points = triangulate_points(kp1_homo, kp2_homo, P1, P2)
 
-    logging.info("Initialising projective reference plane")
-    H = compute_homography(e2, F)
-    reference_plane = np.sum(np.divide(np.eye(3) - H, np.transpose(np.asarray([e2, e2, e2]))), axis=0)/3
+    # TODO: estimate
+    logging.info("Saving to PLY")    
+    points_to_ply(points, 'test_{:04d}_{:04d}.ply'.format(frame1, frame2))
 
-    logging.info("Optimising reference plane")
-    reference_plane = optimize.fmin(reference_plane_error,
-                                    np.append(reference_plane, 1),
-                                    xtol=1e-25,
-                                    ftol=1e-25,
-                                    args=(H.real, e2.real))[0:3]
-
-    # now estimate P2
-    P1, P2 = estimate_projection(H, e2, reference_plane)
-    logging.info("Initial projection matrix: {}".format(P2))
-
-    logging.info("Generating initial point cloud")
-    point_cloud = []
-    for i in range(num_keypoints):
-        point = triangulate_point(kp1_homo[:, i], kp2_homo[:, i], P1, P2)
-        point_cloud.append(point)
-
+    logging.info("Done")
 
 def get_args():
     parser = argparse.ArgumentParser(description='Compute fundamental matrix from image file(s)')
     parser.add_argument('--mode', type=str, help='calibrated or uncalibrated', default='uncalibrated')
-    parser.add_argument('--source', type=str, help='source files', default='./data/fountain_int/[0-9]*.png')
+    parser.add_argument('--source', type=str, help='source files', default='./fountain_int/[0-9]*.png')
     parser.add_argument('--detector', type=str, default='SIFT', help='Feature detector type')
     parser.add_argument('--matcher', type=str, default='flann', help='Matching type')
     parser.add_argument('--log_level', type=int, default=10, help='logging level (0-50)')
     args = parser.parse_args()
 
-    logging.basicConfig(level=args.log_level, format=LOG_FORMAT, filename='logging.txt')
+    logging.basicConfig(level=args.log_level, format=LOG_FORMAT) #, filename='logging.txt')
 
     return args
 
