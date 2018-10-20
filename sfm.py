@@ -8,7 +8,7 @@ import argparse
 import numpy as np
 import scipy.linalg as linalg
 import scipy.optimize as optimize
-
+from bundleadjust import *
 #from calibrated_sfm import calibrated_sfm
 from feature_matcher import FeatureMatcher
 
@@ -253,6 +253,8 @@ def uncalibrated_sfm(frame_names):
     points = triangulate_points(kp1_homo, kp2_homo, P1, P2)
 
     # TODO: estimate
+    P = [P1,P2] 
+    run(BA) 
     logging.info("Saving to PLY")    
     points_to_ply(points, 'test_{:04d}_{:04d}.ply'.format(frame1, frame2))
 
