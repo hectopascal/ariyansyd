@@ -254,7 +254,7 @@ def uncalibrated_sfm(frame_names):
 
     # TODO: estimate
     P = [P1,P2] 
-    run(BA) 
+    #runBA(P) 
     logging.info("Saving to PLY")    
     points_to_ply(points, 'test_{:04d}_{:04d}.ply'.format(frame1, frame2))
 
