@@ -15,6 +15,8 @@ args = parser.parse_args()
 
 log = logging.getLogger(__name__)
 
+LOG_FORMAT = '[%(asctime)s %(levelname)s %(filename)s/%(funcName)s] %(message)s'
+
 def preprocess_frames(source_path):
     # do blur detection?
     pass
