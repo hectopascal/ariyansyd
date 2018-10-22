@@ -9,6 +9,10 @@ import numpy as np
 import scipy.linalg as linalg
 import scipy.optimize as optimize
 
+
+from calibrated import calibrated_sfm
+
+from bundleadjust import *
 from calibrated import calibrated_sfm
 from feature_matcher import FeatureMatcher
 from bundle import *
@@ -318,6 +322,8 @@ def uncalibrated_sfm(frame_names):
     k1, k2 = fm.intersect_matches(image2_name, image3_name, good_matches2_3, good_matches3_2)
 
     # TODO: estimate
+    P = [P1,P2] 
+    #runBA(P) 
     logging.info("Saving to PLY")    
     points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
 

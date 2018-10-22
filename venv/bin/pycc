@@ -1,0 +1,3 @@
+#!/home/yannie/9517/ariyansyd/venv/bin/python2
+from numba.pycc import main
+main()
