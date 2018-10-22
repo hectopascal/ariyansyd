@@ -9,10 +9,10 @@ import numpy as np
 import scipy.linalg as linalg
 import scipy.optimize as optimize
 
-#from calibrated_sfm import calibrated_sfm
+from calibrated import calibrated_sfm
 from feature_matcher import FeatureMatcher
-
-LOG_FORMAT = '%(asctime)s - %(name)s - %(threadName)s -  %(levelname)s - %(message)s'
+from bundle import *
+LOG_FORMAT = '[%(asctime)s %(levelname)s %(filename)s/%(funcName)s] %(message)s'
 
 
 def normalise_keypoints(kp):
@@ -197,7 +197,7 @@ def points_to_ply(points, ply_file):
             fd.write('{} {} {}\n'.format(x, y, z))
 
 
-def estimate_projection_matrices(F):
+def estimate_initial_projection_matrices(F):
     """Estimate the projection matrices from the Fundamental Matrix
     
     A pair of camera matrices P1 and P2 corresponding to the fundamental matrix F are 
@@ -208,37 +208,87 @@ def estimate_projection_matrices(F):
     """
     e1 = fundamental_to_epipole(F)
     e2 = fundamental_to_epipole(F.T)
-    print(e1)
-    print(e2)
     P1 = np.array([[1,0,0,0],
                    [0,1,0,0],
                    [0,0,1,0]])
     Te = skew(e2)
 
-    P2 = np.vstack((np.dot(Te, F.T).T, e2)).T
+    P2 = np.vstack((np.dot(Te, F).T, e2)).T
 
     logging.info("Initial projection matrix: {}".format(P2))
     return P1, P2, e1, e2
 
 
 def triangulate_points(kp1, kp2, P1, P2):
-    point_cloud = []
+    point_cloud = []    # TODO: convert to numpy
     for i in range(kp1.shape[1]):
         point = triangulate_point(kp1[:, i], kp2[:, i], P1, P2)
         point_cloud.append(point)
     return point_cloud
 
 
+def compute_projection(kp_2d, kp_3d, P):
+    """ 
+
+    :param kp_2d:
+    :param kp_3d:
+    :return:
+    """
+    A = np.zeros((2 * kp_2d.shape[0], 12))
+    A[::2, :4] = kp_3d
+    A[1::2, 4:8] = kp_3d
+    A[::2, 8:] = -kp_2d[:, 0, np.newaxis]*kp_3d
+    A[1::2, 8:] = -kp_2d[:, 1, np.newaxis]*kp_3d
+
+    _, _, Vh = linalg.svd(A)
+
+    P = Vh[-1, :].T.reshape((3, 4))
+    P = P//P[10]
+    # print(P)
+    return P
+
+
+def compute_error(kp_2d, kp_3d, P):
+    projections = np.dot(P, kp_3d.T).T
+    projections = projections / projections[:, -1, np.newaxis]
+    err = np.sum((projections[:, :-1] - kp_2d[:, :-1]) ** 2, axis=1)
+    return err, np.sqrt(err) 
+
+
+def decompose_projection(P):
+    """ Decompose P = K[R|t] using RQ decomposition
+
+    :param P: the projection matrix
+    :return: calibration matrix, rotation, translation, camera centre
+    """
+    K, R = linalg.rq(P[:, :-1])
+    s = np.diag(np.sign(np.diag(K)))
+    K = np.dot(K, s)
+    R = np.dot(R, s)
+    T = np.dot(np.linalg.inv(K), P[:, -1])
+    C = np.dot(R.T, -T)
+    return K, R, T, C
+
+
 def uncalibrated_sfm(frame_names):
 
     fm = FeatureMatcher()
 
-    frame1 = 3
-    frame2 = 4
+    for frame_name in frame_names:
+        fm.extract(frame_name)
+
+    frame1 = 0
+    frame2 = 1
     image1_name = frame_names[frame1]
     image2_name = frame_names[frame2]
 
-    kp1, kp2 = fm.cross_match(image1_name, image2_name, normalise=True)
+    keypoints1, descriptors1, image1_data = fm.extract(image1_name) #, image1_data=None, draw=False)
+    keypoints2, descriptors2, image2_data = fm.extract(image2_name) #, image2_data=None, draw=False)
+
+    kp1, kp2 = fm.cross_match(image1_name, image2_name)
+    kp1 = fm.normalise(kp1.T).T
+    kp2 = fm.normalise(kp2.T).T
+
     logging.info("Keypoints matched: {}".format(kp1.shape[0]))
     kp1_homo = cv2.convertPointsToHomogeneous(kp1).reshape(kp1.shape[0], 3).T
     kp2_homo = cv2.convertPointsToHomogeneous(kp2).reshape(kp2.shape[0], 3).T
@@ -247,14 +297,29 @@ def uncalibrated_sfm(frame_names):
     F = keypoints_to_fundamental(kp1_homo, kp2_homo, optimise=True)
     
     logging.info("Estimating Projection Matrices from Fundamental Matrix")
-    P1, P2, e1, e2 = estimate_projection_matrices(F)
+    P1, P2, _, _ = estimate_initial_projection_matrices(F)
 
     logging.info("Triangulating")
     points = triangulate_points(kp1_homo, kp2_homo, P1, P2)
 
+    # now add image 2
+    image3_name = frame_names[2]
+    _, descriptors3, _ = fm.extract(image3_name)
+    descriptors2 = fm._descriptors[image2_name]
+
+    # find good matches in image 2 from image3
+    matches2_3 = fm.matcher.knnMatch(descriptors2, descriptors3, 2)
+    good_matches2_3 = [x for x, y in matches2_3 if x.distance < 0.8*y.distance]
+    # find good matches in image 3 from image2
+    matches3_2 = fm.matcher.knnMatch(descriptors3, descriptors2, 2)
+    good_matches3_2 = [x for x, y in matches3_2 if x.distance < 0.8*y.distance]
+
+    # find
+    k1, k2 = fm.intersect_matches(image2_name, image3_name, good_matches2_3, good_matches3_2)
+
     # TODO: estimate
     logging.info("Saving to PLY")    
-    points_to_ply(points, 'test_{:04d}_{:04d}.ply'.format(frame1, frame2))
+    points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
 
     logging.info("Done")
 
@@ -282,7 +347,6 @@ if __name__ == '__main__':
         sys.exit(-1)
 
     if args.mode == 'calibrated':
-        raise NotImplementedError()
-        #calibrated_sfm(image_files)
+        calibrated_sfm(image_files)
     else:
         uncalibrated_sfm(image_files)
