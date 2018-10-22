@@ -192,9 +192,12 @@ def points_to_ply(points, ply_file):
     with open(ply_file, 'w') as fd:
         fd.write('ply\nformat ascii 1.0\nelement vertex {}\n'
                  'property float x\nproperty float y\nproperty float z\n'
+                 'property uchar red\nproperty uchar green\nproperty uchar blue\n'
                  'end_header\n'.format(len(points)))
-        for x, y, z, w in points:
-            fd.write('{} {} {}\n'.format(x, y, z))
+        for point in points:
+            x, y, z, w = point[0]
+            b, g, r = point[1]
+            fd.write('{} {} {} {} {} {}\n'.format(x, y, z, r, g, b))
 
 
 def estimate_projection_matrices(F):
@@ -221,11 +224,21 @@ def estimate_projection_matrices(F):
     return P1, P2, e1, e2
 
 
-def triangulate_points(kp1, kp2, P1, P2):
+def triangulate_points(kp1, kp2, P1, P2, image1_data, image2_data):
     point_cloud = []
     for i in range(kp1.shape[1]):
+        pointA = [kp1[:,i][0], kp1[:,i][1]]
+
+        # convert pointA back to image plane coordinates
+        height1, width1, depth = image1_data.shape
+        mm1 = (height1 + width1)/2
+
+        pointA[0] = int(pointA[0] * mm1 + width1)
+        pointA[1] = int(pointA[1] * mm1 + height1)
+
+        color = image1_data[pointA[1]][pointA[0]]
         point = triangulate_point(kp1[:, i], kp2[:, i], P1, P2)
-        point_cloud.append(point)
+        point_cloud.append([point,color])
     return point_cloud
 
 
@@ -233,12 +246,18 @@ def uncalibrated_sfm(frame_names):
 
     fm = FeatureMatcher()
 
+    frame_names.sort()
     frame1 = 3
     frame2 = 4
     image1_name = frame_names[frame1]
     image2_name = frame_names[frame2]
+    
+    image1_data = cv2.imread(image1_name)
+    image2_data = cv2.imread(image2_name)
 
     kp1, kp2 = fm.cross_match(image1_name, image2_name, normalise=True)
+    #kp1, kp2 = fm.cross_match(image1_name, image2_name, normalise=False)
+
     logging.info("Keypoints matched: {}".format(kp1.shape[0]))
     kp1_homo = cv2.convertPointsToHomogeneous(kp1).reshape(kp1.shape[0], 3).T
     kp2_homo = cv2.convertPointsToHomogeneous(kp2).reshape(kp2.shape[0], 3).T
@@ -250,7 +269,7 @@ def uncalibrated_sfm(frame_names):
     P1, P2, e1, e2 = estimate_projection_matrices(F)
 
     logging.info("Triangulating")
-    points = triangulate_points(kp1_homo, kp2_homo, P1, P2)
+    points = triangulate_points(kp1_homo, kp2_homo, P1, P2, image1_data, image2_data)
 
     # TODO: estimate
     P = [P1,P2] 
@@ -264,6 +283,8 @@ def get_args():
     parser = argparse.ArgumentParser(description='Compute fundamental matrix from image file(s)')
     parser.add_argument('--mode', type=str, help='calibrated or uncalibrated', default='uncalibrated')
     parser.add_argument('--source', type=str, help='source files', default='./fountain_int/[0-9]*.png')
+    #parser.add_argument('--source', type=str, help='source files', default='./bird_data/images/[0-9]*.ppm')
+    #parser.add_argument('--source', type=str, help='source files', default='./zeno/*.jpg')
     parser.add_argument('--detector', type=str, default='SIFT', help='Feature detector type')
     parser.add_argument('--matcher', type=str, default='flann', help='Matching type')
     parser.add_argument('--log_level', type=int, default=10, help='logging level (0-50)')
