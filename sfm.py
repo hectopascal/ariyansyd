@@ -202,6 +202,37 @@ def points_to_ply(points, ply_file):
             x, y, z, w = point[0]
             b, g, r = point[1]
             fd.write('{} {} {} {} {} {}\n'.format(x, y, z, r, g, b))
+"""
+def points_to_obj(points, obj_file):
+    with open(obj_file, 'w') as fd:
+        # write the points
+        for point in points:
+            x, y, z, w = point[0]
+            b, g, r = point[1]
+            fd.write('v {} {} {}\n'.format(x, y, z))
+
+        # write the faces
+        for i in range(len(points)-2):
+            # find indices of 2 nearest points
+            
+            fd.write('f {} {} {}\n'.format(i, n1, n2))
+
+            
+        #fd.write('ply\nformat ascii 1.0\nelement vertex {}\n'
+        #         'property float x\nproperty float y\nproperty float z\n'
+        #         'property uchar red\nproperty uchar green\nproperty uchar blue\n'
+        #         'end_header\n'.format(len(points)))
+        #for point in points:
+        #    x, y, z, w = point[0]
+        #    b, g, r = point[1]
+        #    fd.write('{} {} {} {} {} {}\n'.format(x, y, z, r, g, b))
+
+def nearestNeighbours(target, arr):
+    distance = (arr-point)**2).sum(axis=1)
+    ndx = distance.argsort()
+"""
+
+
 
 def projective_pose_estimation(feat_2D,P,points3D):
     '''
@@ -400,6 +431,7 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
     #runBA(P,points,points_2D) 
     #logging.info("Saving to PLY")    
     points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
+    #points_to_obj(points, 'uncal_{:04d}_{:04d}.obj'.format(frame1, frame2))
 
     logging.info("Done")
 
