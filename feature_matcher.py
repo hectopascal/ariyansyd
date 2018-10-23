@@ -6,6 +6,7 @@ import pickle
 import copyreg
 import argparse
 import numpy as np
+from collections import OrderedDict
 
 try:
     import progressbar
@@ -28,6 +29,7 @@ def get_args():
 
     return args
 
+
 def _pickle_keypoints(point):
     return cv2.KeyPoint, (*point.pt, point.size, point.angle,
                           point.response, point.octave, point.class_id)
@@ -45,6 +47,9 @@ class FeatureMatcher(object):
         self.matcher  = self._get_matcher(matcher_type)
         self._features = dict()
         self._descriptors = dict()
+        self.features_to_descriptors = dict()
+        self.matches = dict()
+        self.complete_tracks = None
         self.width = None
         self.height = None
         self.mm = None
@@ -87,16 +92,16 @@ class FeatureMatcher(object):
             raise ValueError("Invalid matching type {}".format(matcher))
 
     def extract(self, image_name, image_data=None, draw=False):
-        """
+        """ Extract (and cache to disk) the features and descriptors for the given image
 
-        :param image_name:
-        :param image_data:
-        :param draw:
-        :return:
+        :param image_name: filename of image
+        :param image_data: grayscale pixel data
+        :param draw: outputs a JPEG with marked features
+        :return: list of features, list of descriptors and the image data
         """
         if image_data is None:
             image_data = cv2.imread(image_name, cv2.IMREAD_GRAYSCALE)
-        # TODO: fix this
+        # TODO: fix this...
         if self.width is None:
             self.width, self.height = image_data.shape
             self.mm = (self.width + self.height)/2
@@ -137,6 +142,11 @@ class FeatureMatcher(object):
                     pickle.dump(self._descriptors[image_name], fd)
                 logging.info("Saved descriptors to {}".format(descriptor_file))
 
+            # cache the keypoints and their corresponding descriptors
+            self.features_to_descriptors[image_name] = {
+                (kp.pt[0], kp.pt[1]): desc for kp, desc in zip(self._features[image_name], self._descriptors[image_name])
+            }
+
         if draw:
             draw_file = '{}.{}.keypoints.jpg'.format(image_name, self.detector_type)
             if not os.path.exists(draw_file):
@@ -150,8 +160,13 @@ class FeatureMatcher(object):
         points[1, ] = (points[1, ] - self.height) / self.mm
         return points
 
+    def denormalise(self, points):
+        points[0, ] = points[0, ]*self.mm + self.width
+        points[1, ] = points[1, ]*self.mm + self.height
+        return points.astype(int)
+
     def intersect_matches(self, image1_name, image2_name, matches1, matches2):
-        """ Return the intersection of 
+        """ Return the keypoints that are the intersection of pairwise matching
         """
         keypoints1 = self._features[image1_name]
         keypoints2 = self._features[image2_name]
@@ -175,6 +190,8 @@ class FeatureMatcher(object):
         return r1, r2
 
     def cross_match(self, image1_name, image2_name, image1_data=None, image2_data=None, good_ratio=0.8, draw=False):
+        if (image1_name, image2_name) in self.matches:
+            return self.matches[(image1_name, image2_name)]
         keypoints1, descriptors1, image1_data = self.extract(image1_name, image1_data, draw=draw)
         keypoints2, descriptors2, image2_data = self.extract(image2_name, image2_data, draw=draw)
 
@@ -190,32 +207,7 @@ class FeatureMatcher(object):
 
         # get the intersection
         r1, r2 = self.intersect_matches(image1_name, image2_name, good_matches1, good_matches2)
-
-        # # cross match to ensure they are very good
-        # kp1 = set([(keypoints1[p.queryIdx].pt, keypoints2[p.trainIdx].pt) for p in good_matches1])
-        # kp2 = set([(keypoints1[p.trainIdx].pt, keypoints2[p.queryIdx].pt) for p in good_matches2])
-
-        # very_good_matches = kp1.intersection(kp2)
-
-        # very_good_keypoints_1 = np.zeros((len(very_good_matches), 2), dtype=np.float)
-        # very_good_keypoints_2 = np.zeros((len(very_good_matches), 2), dtype=np.float)
-
-        # for idx, (pt1, pt2) in enumerate(very_good_matches):
-        #     # if normalise:
-        #     #     p1_w = (pt1[0] - width1) / mm1
-        #     #     p1_h = (pt1[1] - height1) / mm1
-        #     #     p2_w = (pt2[0] - width2) / mm2
-        #     #     p2_h = (pt2[1] - height2) / mm2
-        #     #     very_good_keypoints_1[idx] = np.array((p1_w, p1_h))
-        #     #     very_good_keypoints_2[idx] = np.array((p2_w, p2_h))
-        #     # else:
-        #         very_good_keypoints_1[idx] = np.array(pt1)
-        #         very_good_keypoints_2[idx] = np.array(pt2)
-
-        # # Use RANSAC to find inliers
-        # retval, mask = cv2.findHomography(very_good_keypoints_1, very_good_keypoints_2, cv2.RANSAC, 100.0)
-        # mask = mask.ravel()
-        # r1, r2 = very_good_keypoints_1[mask == 1], very_good_keypoints_2[mask == 1]
+        self.matches[(image1_name, image2_name)] = (r1, r2)
 
         if draw:
             draw_file = 'matches.{}-{}.{}.jpg'.format(os.path.split(image1_name)[1], os.path.split(image2_name)[1], self.detector_type)
@@ -227,57 +219,108 @@ class FeatureMatcher(object):
                 cv2.imwrite(draw_file, draw_image)
         return r1, r2
 
-    def flow_match(self, image1_name, image2_name, image1_data=None, image2_data=None):
-        """
+    def find_complete_tracks(self, image_files):
+        """ Locates complete tracks in an image sequence i.e presence and location of features found across all image files
 
-        :param image1_name:
-        :param image2_name:
-        :param image1_data:
-        :param image2_data:
+        :param image_files: a list of filenames
         :return:
         """
-        if not image1_data:
-            image1_data = cv2.imread(image1_name, cv2.IMREAD_GRAYSCALE)
+        # the maximum number of potential features is the total features found in the first sequence
+        max_features = len(self.matches[(image_files[0], image_files[1])][0])
 
-        if not image2_data:
-            image2_data = cv2.imread(image2_name, cv2.IMREAD_GRAYSCALE)
+        # the initial two coordinates per feature is found in the first image pair
+        tracks = list()
+        tracks.append(OrderedDict({(x, y): a
+                                   for a, (x, y) in enumerate(self.matches[(image_files[0], image_files[1])][0])}))
+        tracks.append(OrderedDict({(x, y): a
+                                   for a, (x, y) in enumerate(self.matches[(image_files[0], image_files[1])][1])}))
 
-        # Parameters for lucas kanade optical flow
-        lk_params = dict(winSize=(15, 15),
-                         maxLevel=2,
-                         criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+        for i in range(0, len(image_files) - 2):
+            kpts1 = self.matches[(image_files[i], image_files[i + 1])][1]
+            kpts2 = self.matches[(image_files[i + 1], image_files[i + 2])][1]
 
-        first_key_points, _, _ = self.extract(image1_name, image_data=image1_data, draw=False)
-        first_key_arr = np.array([i.pt for i in first_key_points]).astype(np.float32)
-        second_key_arr, status, err = cv2.calcOpticalFlowPyrLK(image1_data, image2_data, first_key_arr, None, **lk_params)
-        condition = (status == 1) * (err < 5.)
-        concat = np.concatenate((condition, condition), axis=1)
-        first_kp = first_key_arr[concat].reshape(-1, 2)
-        second_kp = second_key_arr[concat].reshape(-1, 2)
+            desc1 = np.array([self.features_to_descriptors[image_files[i + 1]][(kp[0], kp[1])] for kp in kpts1])
+            desc2 = np.array([self.features_to_descriptors[image_files[i + 2]][(kp[0], kp[1])] for kp in kpts2])
 
-        return first_kp, second_kp
+            matches1 = self.matcher.knnMatch(desc1, desc2, 2)
+            good_matches1 = [x for x, y in matches1 if x.distance < 0.8 * y.distance]
+            matches2 = self.matcher.knnMatch(desc2, desc1, 2)
+            good_matches2 = [x for x, y in matches2 if x.distance < 0.8 * y.distance]
 
-    def find_tracks(self, image_files, num_consecutive_images):
+            # cross match to ensure they are very good
+            kp1 = set([((kpts1[p.queryIdx,][0], kpts1[p.queryIdx,][1]),
+                        (kpts2[p.trainIdx,][0], kpts2[p.trainIdx,][1]))
+                       for p in good_matches1])
+            kp2 = set([((kpts1[p.trainIdx,][0], kpts1[p.trainIdx,][1]),
+                        (kpts2[p.queryIdx,][0], kpts2[p.queryIdx,][1]))
+                       for p in good_matches2])
+            very_good_matches = kp1.intersection(kp2)
+
+            track = [0 for _ in range(max_features)]
+            for idx, (pt1, pt2) in enumerate(very_good_matches):
+                if pt1 in tracks[-1]:
+                    track[tracks[-1][pt1]] = pt2
+
+            tracks.append(OrderedDict({b: a for a, b in enumerate(track) if b}))
+
+        # create a matrix of tracks where the first dimension is the feature, the second is the index in the
+        # image sequence and the final is the actual coordinates (x,y) of the image
+        num_complete_features = len(tracks[-1])
+        self.complete_tracks = np.zeros((num_complete_features, len(tracks), 2))
+
+        track_idx = {x: y for y, x in enumerate(tracks[-1].values())}
+        for i, track in enumerate(tracks):
+            for pt, v in track.items():
+                if v in track_idx:
+                    self.complete_tracks[track_idx[v], i, ] = pt
+
+        # dump the complete features
+        # features, img_index, idx = self.complete_tracks.shape
+        # for feature in range(features):
+        #     for img_idx in range(img_index):
+        #         print(feature, img_idx, self.complete_tracks[feature, img_idx, ])
+
+    def find_tracks(self, image_files):
         """ Locates tracks across consecutive images i.e presence of features found across all files
 
         :param image_files: a list of filenames
-        :param num_consecutive_images: the number of consecutive images to find matches
         :return:
         """
-        from itertools import combinations
-        matches = dict()
-        x = 0
-        #tracks
-        for i in range(len(image_files) - num_consecutive_images):
-            self.flow_match(image_files[i], image_files[i+1])
-        #     file_sequence = [n for n in image_files[i:i+num_consecutive_images]]
-        #     for file1, file2 in combinations(file_sequence, 2):
-        #         x += 1
-        #         if (file1, file2) in matches:
-        #             continue
-        #         matches[(file1, file2)] = True
-        #         print("add", file1, file2)
-        # print(len(matches), x)
+        # each element in the list is a feature track ie. a list containing the coordinates it was found in
+        # an image where the position in the list corresponds to the index of the image sequence
+        self.feature_tracks = {}
+
+        # initialise the feature tracks
+
+        for i in range(0, len(image_files) - 2):
+            kpts1 = self.matches[(image_files[i], image_files[i + 1])][1]
+            kpts2 = self.matches[(image_files[i + 1], image_files[i + 2])][0]
+
+            desc1 = np.array([self.features_to_descriptors[image_files[i + 1]][(kp[0], kp[1])] for kp in kpts1])
+            desc2 = np.array([self.features_to_descriptors[image_files[i + 1]][(kp[0], kp[1])] for kp in kpts2])
+
+            matches1 = self.matcher.knnMatch(desc1, desc2, 2)
+            good_matches1 = [x for x, y in matches1 if x.distance < 0.8 * y.distance]
+            matches2 = self.matcher.knnMatch(desc2, desc1, 2)
+            good_matches2 = [x for x, y in matches2 if x.distance < 0.8 * y.distance]
+
+            # cross match to ensure they are very good
+            kp1 = set([((kpts1[p.queryIdx, ][0], kpts1[p.queryIdx, ][1]),
+                        (kpts2[p.trainIdx, ][0], kpts2[p.trainIdx, ][1]))
+                            for p in good_matches1])
+            kp2 = set([((kpts1[p.trainIdx, ][0], kpts1[p.trainIdx, ][1]),
+                        (kpts2[p.queryIdx, ][0], kpts2[p.queryIdx, ][1]))
+                            for p in good_matches2])
+            very_good_matches = kp1.intersection(kp2)
+
+            very_good_keypoints_1 = np.zeros((len(very_good_matches), 2), dtype=np.float)
+            very_good_keypoints_2 = np.zeros((len(very_good_matches), 2), dtype=np.float)
+
+            for idx, (pt1, pt2) in enumerate(very_good_matches):
+                very_good_keypoints_1[idx] = np.array(pt1)
+                very_good_keypoints_2[idx] = np.array(pt2)
+
+            self.feature_tracks[(image_files[i + 1])] = (very_good_keypoints_1, very_good_keypoints_2)
 
     def process(self, files):
         image1 = None
@@ -295,12 +338,13 @@ class FeatureMatcher(object):
             kp1, kp2 = self.cross_match(image2, image1, draw=True)
 
 
+
 def main():
     args = get_args()
     source_files = glob.glob(args.source)
     feature_matcher = FeatureMatcher(detector_type=args.detector, matcher_type=args.matcher)
-    #feature_matcher.process(source_files)
-    feature_matcher.find_tracks(source_files, 2)
+    feature_matcher.process(source_files)
+    #feature_matcher.find_tracks(source_files, 2)
 
 if __name__ == '__main__':
     main()

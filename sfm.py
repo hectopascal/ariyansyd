@@ -287,9 +287,9 @@ def estimate_initial_projection_matrices(F):
     """
     e1 = fundamental_to_epipole(F)
     e2 = fundamental_to_epipole(F.T)
-    P1 = np.array([[1,0,0,0],
-                   [0,1,0,0],
-                   [0,0,1,0]])
+    P1 = np.array([[1, 0, 0, 0],
+                   [0, 1, 0, 0],
+                   [0, 0, 1, 0]])
     Te = skew(e2)
 
     P2 = np.vstack((np.dot(Te, F).T, e2)).T
@@ -316,7 +316,7 @@ def triangulate_points(kp1, kp2, P1, P2, image1_data, image2_data):
     return point_cloud
 
 
-def compute_projection(kp_2d, kp_3d, P):
+def compute_projection(kp_2d, kp_3d):
     """ 
 
     :param kp_2d:
@@ -358,18 +358,23 @@ def decompose_projection(P):
     return K, R, T, C
 
 
-
-
 def uncalibrated_sfm(frame_names, detector_type, matcher_type):
+
+    num_frames = len(frame_names)
     frame_names.sort()
+
+    # initialise the feature matcher
     fm = FeatureMatcher(detector_type=detector_type, matcher_type=matcher_type)
+
+    # preprocess features and descriptors
+    fm.process(frame_names)
+
+    # find features that are can be matched across all images
+    fm.find_complete_tracks(frame_names)
 
     P = [] # list of camera matrices
 
-    for frame_name in frame_names:
-        fm.extract(frame_name)
-
-    for i in range(0,len(frame_names)-1):
+    for i in range(0, num_frames - 1):
         frame1 = i
         frame2 = i+1
 
@@ -379,8 +384,8 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
         image1_data = cv2.imread(image1_name)
         image2_data = cv2.imread(image2_name)
 
-        keypoints1, descriptors1, _ = fm.extract(image1_name) #, image1_data=None, draw=False)
-        keypoints2, descriptors2, _ = fm.extract(image2_name) #, image2_data=None, draw=False)
+        #keypoints1, descriptors1, _ = fm.extract(image1_name, image_data=cv2.cvtColor(image1_data, cv2.COLOR_BGR2GRAY))
+        #keypoints2, descriptors2, _ = fm.extract(image2_name, image_data=cv2.cvtColor(image2_data, cv2.COLOR_BGR2GRAY))
 
         kp1, kp2 = fm.cross_match(image1_name, image2_name)
         kp1 = fm.normalise(kp1.T).T
@@ -392,45 +397,29 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
 
         logging.info("Estimating Fundamental Matrix from correspondences")
         F = keypoints_to_fundamental(kp1_homo, kp2_homo, optimise=True)
-        
+
+        #if i == 0:
         logging.info("Estimating Projection Matrices from Fundamental Matrix")
         P1, P2, _, _ = estimate_initial_projection_matrices(F)
-        print(P1)
-        print(P2)
-        # now add image 2
-        image3_name = frame_names[2]
-        _, descriptors3, _ = fm.extract(image3_name)
-        descriptors2 = fm._descriptors[image2_name]
-
-        # find good matches in image 2 from image3
-        matches2_3 = fm.matcher.knnMatch(descriptors2, descriptors3, 2)
-        good_matches2_3 = [x for x, y in matches2_3 if x.distance < 0.8*y.distance]
-        # find good matches in image 3 from image2
-        matches3_2 = fm.matcher.knnMatch(descriptors3, descriptors2, 2)
-        good_matches3_2 = [x for x, y in matches3_2 if x.distance < 0.8*y.distance]
-
-        # find
-        k1, k2 = fm.intersect_matches(image2_name, image3_name, good_matches2_3, good_matches3_2)
-        print("baaaa")
-        print(k1[0])
-        print(k2[0])
-        print("emmmm")
-
+        #else:
+        #    logging.info("Estimating Projection Matrices from Point Correspondences")
+        #    P1 = P[-1]
+        #    P2 = compute_projection()
         
         logging.info("Triangulating")
         points = triangulate_points(kp1_homo, kp2_homo, P1, P2, image1_data, image2_data)
         points = np.asarray(points)
         print(points)
-        points_2D = [kp1_homo,kp2_homo]
+        points_2D = [kp1_homo, kp2_homo]
         points_2D = np.asarray(points_2D)
     
-        P = projective_pose_estimation(points_2D,P2,points)
+        P = projective_pose_estimation(points_2D, P2, points)
         print(P)
 
         points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
     #runBA(P,points,points_2D) 
     #logging.info("Saving to PLY")    
-    points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
+    #points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
     #points_to_obj(points, 'uncal_{:04d}_{:04d}.obj'.format(frame1, frame2))
 
     logging.info("Done")
