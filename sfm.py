@@ -329,9 +329,9 @@ def decompose_projection(P):
 
 
 
-def uncalibrated_sfm(frame_names):
+def uncalibrated_sfm(frame_names, detector_type, matcher_type):
     frame_names.sort()
-    fm = FeatureMatcher()
+    fm = FeatureMatcher(detector_type=detector_type, matcher_type=matcher_type)
 
     P = [] # list of camera matrices
 
@@ -409,7 +409,7 @@ def get_args():
     parser.add_argument('--source', type=str, help='source files', default='./fountain_int/[0-9]*.png')
     #parser.add_argument('--source', type=str, help='source files', default='./bird_data/images/[0-9]*.ppm')
     #parser.add_argument('--source', type=str, help='source files', default='./zeno/*.jpg')
-    parser.add_argument('--detector', type=str, default='SIFT', help='Feature detector type')
+    parser.add_argument('--detector', type=str, default='SURF', help='Feature detector type')
     parser.add_argument('--matcher', type=str, default='flann', help='Matching type')
     parser.add_argument('--log_level', type=int, default=10, help='logging level (0-50)')
     args = parser.parse_args()
@@ -431,4 +431,4 @@ if __name__ == '__main__':
     if args.mode == 'calibrated':
         calibrated_sfm(image_files)
     else:
-        uncalibrated_sfm(image_files)
+        uncalibrated_sfm(image_files, args.detector, args.matcher)
