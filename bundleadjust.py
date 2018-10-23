@@ -93,9 +93,10 @@ def readPoints(file_name):
 
     return camera_params, points_3d, camera_indices, point_indices, points_2d
 
-def runBA(P):
+def runBA(P,points_3d,points_2d):
 
-    camera_params, points_3d, camera_indices, point_indices, points_2d = readPoints('BApoints.txt')
+    #camera_params, points_3d, camera_indices, point_indices, points_2d = readPoints('BApoints.txt')
+    camera_params = P
 
     ### PRINTING SOME STATS ###
     n_cameras = camera_params.shape[0]
