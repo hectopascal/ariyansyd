@@ -202,7 +202,6 @@ def points_to_ply(points, ply_file):
             x, y, z, w = point[0]
             b, g, r = point[1]
             fd.write('{} {} {} {} {} {}\n'.format(x, y, z, r, g, b))
-<<<<<<< HEAD
 
 def projective_pose_estimation(self,feat_2D,P,points3D):
     '''
@@ -232,14 +231,11 @@ def projective_pose_estimation(self,feat_2D,P,points3D):
             VV=V[0:12,11]
             VV=VV/VV[10]
             VV=np.delete(VV,10)
-=======
->>>>>>> 247f214383a399a20fb009a869b5168023b027ec
 
             #refine the estimate for the i-th projection matrix
             result=least_squares(self._eg_utils.refine_projection_matrix,VV, args=(points3D,feat_2D[i,:,:]))
             VV=result.x
 
-<<<<<<< HEAD
             Pr=np.zeros(shape=[3,4]);
             Pr[0,:]=VV[0:4]
             Pr[1,:]=VV[4:8]
@@ -249,8 +245,6 @@ def projective_pose_estimation(self,feat_2D,P,points3D):
     return P
 
 
-=======
->>>>>>> 247f214383a399a20fb009a869b5168023b027ec
 def estimate_initial_projection_matrices(F):
     """Estimate the projection matrices from the Fundamental Matrix
     
