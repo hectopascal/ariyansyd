@@ -203,7 +203,7 @@ def points_to_ply(points, ply_file):
             b, g, r = point[1]
             fd.write('{} {} {} {} {} {}\n'.format(x, y, z, r, g, b))
 
-def projective_pose_estimation(self,feat_2D,P,points3D):
+def projective_pose_estimation(feat_2D,P,points3D):
     '''
     Method to add views using an initial 3D structure, i.e. compute the projection matrices for all the additional views (the first two are already
     estimated in previous steps)
@@ -218,7 +218,7 @@ def projective_pose_estimation(self,feat_2D,P,points3D):
 
     AA=np.zeros(shape=[2*number_of_features,12]);
 
-    for i in range(2,self._sequence_length): 
+    for i in range(2,len(feat_2D)): 
             for j in range(0,number_of_features):
                     AA[2*j,0:4]=points3D[j];
                     AA[2*j,8:12]=-feat_2D[i,0,j]*points3D[j]
@@ -333,59 +333,72 @@ def uncalibrated_sfm(frame_names):
     frame_names.sort()
     fm = FeatureMatcher()
 
+    P = [] # list of camera matrices
+
     for frame_name in frame_names:
         fm.extract(frame_name)
 
-    frame1 = 0
-    frame2 = 1
+    for i in range(0,len(frame_names)-1):
+        frame1 = i
+        frame2 = i+1
 
-    image1_name = frame_names[frame1]
-    image2_name = frame_names[frame2]
+        image1_name = frame_names[frame1]
+        image2_name = frame_names[frame2]
+        
+        image1_data = cv2.imread(image1_name)
+        image2_data = cv2.imread(image2_name)
+
+        keypoints1, descriptors1, _ = fm.extract(image1_name) #, image1_data=None, draw=False)
+        keypoints2, descriptors2, _ = fm.extract(image2_name) #, image2_data=None, draw=False)
+
+        kp1, kp2 = fm.cross_match(image1_name, image2_name)
+        kp1 = fm.normalise(kp1.T).T
+        kp2 = fm.normalise(kp2.T).T
+
+        logging.info("Keypoints matched: {}".format(kp1.shape[0]))
+        kp1_homo = cv2.convertPointsToHomogeneous(kp1).reshape(kp1.shape[0], 3).T
+        kp2_homo = cv2.convertPointsToHomogeneous(kp2).reshape(kp2.shape[0], 3).T
+
+        logging.info("Estimating Fundamental Matrix from correspondences")
+        F = keypoints_to_fundamental(kp1_homo, kp2_homo, optimise=True)
+        
+        logging.info("Estimating Projection Matrices from Fundamental Matrix")
+        P1, P2, _, _ = estimate_initial_projection_matrices(F)
+        print(P1)
+        print(P2)
+        # now add image 2
+        image3_name = frame_names[2]
+        _, descriptors3, _ = fm.extract(image3_name)
+        descriptors2 = fm._descriptors[image2_name]
+
+        # find good matches in image 2 from image3
+        matches2_3 = fm.matcher.knnMatch(descriptors2, descriptors3, 2)
+        good_matches2_3 = [x for x, y in matches2_3 if x.distance < 0.8*y.distance]
+        # find good matches in image 3 from image2
+        matches3_2 = fm.matcher.knnMatch(descriptors3, descriptors2, 2)
+        good_matches3_2 = [x for x, y in matches3_2 if x.distance < 0.8*y.distance]
+
+        # find
+        k1, k2 = fm.intersect_matches(image2_name, image3_name, good_matches2_3, good_matches3_2)
+        print("baaaa")
+        print(k1[0])
+        print(k2[0])
+        print("emmmm")
+
+        
+        logging.info("Triangulating")
+        points = triangulate_points(kp1_homo, kp2_homo, P1, P2, image1_data, image2_data)
+        points = np.asarray(points)
+        print(points)
+        points_2D = [kp1_homo,kp2_homo]
+        points_2D = np.asarray(points_2D)
     
-    image1_data = cv2.imread(image1_name)
-    image2_data = cv2.imread(image2_name)
+        P = projective_pose_estimation(points_2D,P2,points)
+        print(P)
 
-    keypoints1, descriptors1, _ = fm.extract(image1_name) #, image1_data=None, draw=False)
-    keypoints2, descriptors2, _ = fm.extract(image2_name) #, image2_data=None, draw=False)
-
-    kp1, kp2 = fm.cross_match(image1_name, image2_name)
-    kp1 = fm.normalise(kp1.T).T
-    kp2 = fm.normalise(kp2.T).T
-
-    logging.info("Keypoints matched: {}".format(kp1.shape[0]))
-    kp1_homo = cv2.convertPointsToHomogeneous(kp1).reshape(kp1.shape[0], 3).T
-    kp2_homo = cv2.convertPointsToHomogeneous(kp2).reshape(kp2.shape[0], 3).T
-
-    logging.info("Estimating Fundamental Matrix from correspondences")
-    F = keypoints_to_fundamental(kp1_homo, kp2_homo, optimise=True)
-    
-    logging.info("Estimating Projection Matrices from Fundamental Matrix")
-    P1, P2, _, _ = estimate_initial_projection_matrices(F)
-
-    logging.info("Triangulating")
-    points = triangulate_points(kp1_homo, kp2_homo, P1, P2, image1_data, image2_data)
-
-    # now add image 2
-    image3_name = frame_names[2]
-    _, descriptors3, _ = fm.extract(image3_name)
-    descriptors2 = fm._descriptors[image2_name]
-
-    # find good matches in image 2 from image3
-    matches2_3 = fm.matcher.knnMatch(descriptors2, descriptors3, 2)
-    good_matches2_3 = [x for x, y in matches2_3 if x.distance < 0.8*y.distance]
-    # find good matches in image 3 from image2
-    matches3_2 = fm.matcher.knnMatch(descriptors3, descriptors2, 2)
-    good_matches3_2 = [x for x, y in matches3_2 if x.distance < 0.8*y.distance]
-
-    # find
-    k1, k2 = fm.intersect_matches(image2_name, image3_name, good_matches2_3, good_matches3_2)
-
-    # TODO: estimate
-    P = [P1,P2] 
-    P = np.asarray(P)
-    #projective_pose_estimation(feat_2D,P,points)
-    #runBA(P) 
-    logging.info("Saving to PLY")    
+        points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
+    #runBA(P,points,points_2D) 
+    #logging.info("Saving to PLY")    
     points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
 
     logging.info("Done")
