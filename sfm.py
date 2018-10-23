@@ -202,8 +202,55 @@ def points_to_ply(points, ply_file):
             x, y, z, w = point[0]
             b, g, r = point[1]
             fd.write('{} {} {} {} {} {}\n'.format(x, y, z, r, g, b))
+<<<<<<< HEAD
+
+def projective_pose_estimation(self,feat_2D,P,points3D):
+    '''
+    Method to add views using an initial 3D structure, i.e. compute the projection matrices for all the additional views (the first two are already
+    estimated in previous steps)
+    Args: 
+            feat_2D: 2D feature coordinates for all images
+            P: projection matrices
+            points3d: 3D point cloud
+    Returns: 
+            P: projection matrices for all views
+    '''
+    number_of_features=feat_2D.shape[2]
+
+    AA=np.zeros(shape=[2*number_of_features,12]);
+
+    for i in range(2,self._sequence_length): 
+            for j in range(0,number_of_features):
+                    AA[2*j,0:4]=points3D[j];
+                    AA[2*j,8:12]=-feat_2D[i,0,j]*points3D[j]
+                    AA[2*j+1,4:8]=points3D[j];
+                    AA[2*j+1,8:12]=-feat_2D[i,1,j]*points3D[j]
+
+            U, s, Vh = svd(AA)
+            V=np.transpose(Vh)
+
+            VV=V[0:12,11]
+            VV=VV/VV[10]
+            VV=np.delete(VV,10)
+=======
+>>>>>>> 247f214383a399a20fb009a869b5168023b027ec
+
+            #refine the estimate for the i-th projection matrix
+            result=least_squares(self._eg_utils.refine_projection_matrix,VV, args=(points3D,feat_2D[i,:,:]))
+            VV=result.x
+
+<<<<<<< HEAD
+            Pr=np.zeros(shape=[3,4]);
+            Pr[0,:]=VV[0:4]
+            Pr[1,:]=VV[4:8]
+            Pr[2,:]=np.append(np.append(VV[8:10],1),VV[10])
+            P[:,:,i]=Pr
+
+    return P
 
 
+=======
+>>>>>>> 247f214383a399a20fb009a869b5168023b027ec
 def estimate_initial_projection_matrices(F):
     """Estimate the projection matrices from the Fundamental Matrix
     
@@ -274,7 +321,6 @@ def compute_error(kp_2d, kp_3d, P):
 
 def decompose_projection(P):
     """ Decompose P = K[R|t] using RQ decomposition
-
     :param P: the projection matrix
     :return: calibration matrix, rotation, translation, camera centre
     """
@@ -287,8 +333,10 @@ def decompose_projection(P):
     return K, R, T, C
 
 
-def uncalibrated_sfm(frame_names):
 
+
+def uncalibrated_sfm(frame_names):
+    frame_names.sort()
     fm = FeatureMatcher()
 
     for frame_name in frame_names:
@@ -340,6 +388,8 @@ def uncalibrated_sfm(frame_names):
 
     # TODO: estimate
     P = [P1,P2] 
+    P = np.asarray(P)
+    #projective_pose_estimation(feat_2D,P,points)
     #runBA(P) 
     logging.info("Saving to PLY")    
     points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))

@@ -128,7 +128,9 @@ def runBA(P):
     print(result)
     feat_2D = [n_cameras, n_points, camera_indices, point_indices, points_2d]
     error=np.power(sum(f0),2)
-
+    print("errrrrrrrrrrrrrrrrrr")
+    print(P)
+    print(X)
     #get the refined projection matrices from the optimal vector
     for i in range(0,3):
             P[:,:,i]=np.reshape(X[0+i*11:12+i*11],(3,4));
