@@ -234,8 +234,7 @@ def nearestNeighbours(target, arr):
 
 def projective_pose_estimation(feat_2D,P,points3D):
     '''
-    Method to add views using an initial 3D structure, i.e. compute the projection matrices for all the additional views (the first two are already
-    estimated in previous steps)
+    Method to add views using an initial 3D structure, i.e. compute the projection matrices for all the additional views (the first two are already estimated in previous steps)
     Args: 
             feat_2D: 2D feature coordinates for all images
             P: projection matrices
@@ -297,7 +296,9 @@ def estimate_initial_projection_matrices(F):
 
 
 def triangulate_points(kp1, kp2, P1, P2, image1_data, image2_data):
-    point_cloud = []
+    point_cloud = []    # TODO: convert to numpy
+
+    zValues = []
     for i in range(kp1.shape[1]):
         pointA = (kp1[:, i][0], kp1[:, i][1])
         pointB = (kp2[:, i][0], kp2[:, i][1])
@@ -310,9 +311,46 @@ def triangulate_points(kp1, kp2, P1, P2, image1_data, image2_data):
 
         color = image1_data[pointRGB[1]][pointRGB[0]]
         point = triangulate_point(pointA, pointB, P1, P2)
-        point_cloud.append([point, color])
+        zValues.append(point[2])
+        point_cloud.append([point,color])
+
+    showDepthMap(zValues, image1_data, kp1)
+    
     return point_cloud
 
+def showDepthMap(zValues, image_data, kp1):
+    # squash Z's into range [0,255]
+    minZ = min(zValues)
+    maxZ = max(zValues)-minZ
+    for z in range(len(zValues)):
+        zValues[z] -= minZ
+        zValues[z] = 255-int(zValues[z] / maxZ * 255)
+
+    im = image_data.copy()
+    im[im > 0] = 0
+    for i in range(kp1.shape[1]):
+        pointA = [kp1[:,i][0], kp1[:,i][1]]
+
+        height1, width1, depth = image_data.shape
+        mm1 = (height1 + width1)/2
+
+        pointA[0] = int(pointA[0] * mm1 + height1)
+        pointA[1] = int(pointA[1] * mm1 + width1)
+        z = zValues[i]
+
+        im[pointA[1]][pointA[0]] = (z,z,z)
+
+    kSize = int(min(image_data.shape[:2])*0.025)
+    kernel = np.ones((kSize,kSize), np.uint8)
+    im = cv2.dilate(im, kernel, iterations=1)
+
+    cv2.namedWindow('DepthMap', cv2.WINDOW_NORMAL)
+    cv2.moveWindow("DepthMap", 20,20)
+    cv2.namedWindow('Original', cv2.WINDOW_NORMAL)
+    cv2.imshow('DepthMap', im)
+    cv2.imshow('Original', image_data)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
 def compute_projection(kp_2d, kp_3d):
     """ 
@@ -375,6 +413,10 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
     inv_point_cloud = []  # 2d points -> 3d point
 
     P = [] # list of camera matrices
+    points_2D = []
+    points_3D = []
+    #for frame_name in frame_names:
+    #    fm.extract(frame_name)
 
     for i in range(0, num_frames - 1):
         frame1 = i
@@ -385,9 +427,6 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
         
         image1_data = cv2.imread(image1_name)
         image2_data = cv2.imread(image2_name)
-
-        #keypoints1, descriptors1, _ = fm.extract(image1_name, image_data=cv2.cvtColor(image1_data, cv2.COLOR_BGR2GRAY))
-        #keypoints2, descriptors2, _ = fm.extract(image2_name, image_data=cv2.cvtColor(image2_data, cv2.COLOR_BGR2GRAY))
 
         kp1, kp2 = fm.cross_match(image1_name, image2_name)
         norm_kp1 = fm.normalise(kp1.T.copy()).T
@@ -441,11 +480,26 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
         #
         # P = projective_pose_estimation(points_2D, P2, points)
         # print(P)
+        # The following gets the same result:
+        #F, mask = cv2.findFundamentalMat(kp1, kp2, cv2.FM_8POINT)
+        
+#        logging.info("Estimating Projection Matrices from Fundamental Matrix")
+#        P1, P2, _, _ = estimate_initial_projection_matrices(F)
+        
+#        logging.info("Triangulating")
+#        points = triangulate_points(kp1_homo, kp2_homo, P1, P2, image1_data, image2_data)
+#        points = np.asarray(points)
+#        points_2D = [kp1_homo,kp2_homo]
+#        points_2D = np.asarray(points_2D)
+    
+#        P = projective_pose_estimation(points_2D,P2,points)
+#        print(P)
 
         points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
-    #runBA(P,points,points_2D) 
+    
+#    points_3D = np.asarray(points_3D)
+#    runBA(P,points_3D,points_2D) 
     #logging.info("Saving to PLY")    
-    #points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
     #points_to_obj(points, 'uncal_{:04d}_{:04d}.obj'.format(frame1, frame2))
 
     logging.info("Done")
@@ -455,7 +509,7 @@ def get_args():
     parser.add_argument('--mode', type=str, help='calibrated or uncalibrated', default='uncalibrated')
     parser.add_argument('--source', type=str, help='source files', default='./fountain_int/[0-9]*.png')
     #parser.add_argument('--source', type=str, help='source files', default='./bird_data/images/[0-9]*.ppm')
-    #parser.add_argument('--source', type=str, help='source files', default='./zeno/*.jpg')
+    #parser.add_argument('--source', type=str, help='source files', default='./zeno/*.jpeg')
     parser.add_argument('--detector', type=str, default='SURF', help='Feature detector type')
     parser.add_argument('--matcher', type=str, default='flann', help='Matching type')
     parser.add_argument('--log_level', type=int, default=10, help='logging level (0-50)')
