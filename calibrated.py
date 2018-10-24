@@ -80,12 +80,8 @@ class SingleCameraReconstruction(object):
         """ Estimate the projection matrices P1 and P2 from a set of keypoints and E
 
         :param essential: essential matrix
-        :param keypoints1: keypoints in image 1
-        :param keypoints2: keypoints in image 2
         :return:
         """
-        # keypoints1 = keypoints1.T
-        # keypoints2 = keypoints2.T
         P1 = self.projections[-1]
 
         W = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
@@ -199,27 +195,8 @@ class SingleCameraReconstruction(object):
         :param image2:
         :return:
         """
-        # feature tracks are a mapping of 3d points to a mapping of an image (index) -> 2d point
-        new_point_cloud = {(x, y, z): {seq_num: kp1[num], seq_num + 1: kp2[num]}
-                           for num, (x, y, z) in enumerate(kp_3d) }
-
+        new_point_cloud = {(x, y, z): image1[int(v), int(u), ] for (u, v), (x, y, z) in zip(kp1, kp_3d) }
         self.point_cloud[seq_num] = new_point_cloud
-
-        # # create a mapping of points to image views
-        #
-        # #point_tracks = defaultdict(set)
-        # for (x, y) in kp2:
-        #     self.point_tracks[(x, y)].add(seq_num)
-        #     self.point_tracks[(x, y)].add(seq_num + 1)
-        #
-        # for kp in kp1:
-        #     self.point_tracks[(x, y)].add(seq_num)
-        #     self.point_tracks[(x, y)].add(seq_num + 1)
-        #
-        # # create a mapping of image views to points
-        # #image_tracks = defaultdict(set)
-        # self.image_tracks[seq_num] = set((x, y) for (x, y) in kp1)
-        # self.image_tracks[seq_num + 1] = set((x, y) for (x, y) in kp2)
 
         self.inv_point_cloud[seq_num] = (dict(), dict())
         for (x, y, z), (u1, v1), (u2, v2) in zip(kp_3d, kp1, kp2):
@@ -227,18 +204,16 @@ class SingleCameraReconstruction(object):
             self.inv_point_cloud[seq_num][1][(u2, v2)] = (x, y, z)
 
     def save_point_cloud(self, i, file_name='./calibrated.ply'):
-        if i is None:
-            points = []
-            for i in range(len(self.point_cloud)):
-                points.extend([pt for pt, _ in self.point_cloud[i].items()])
-        else:
-            points = [pt for pt, _ in self.point_cloud[i].items()]
+        points = self.point_cloud[i].items()
         with open(file_name, 'w') as fd:
             fd.write('ply\nformat ascii 1.0\nelement vertex {}\n'
                      'property float x\nproperty float y\nproperty float z\n'
+                     'property uchar red\nproperty uchar green\nproperty uchar blue\n'
                      'end_header\n'.format(len(points)))
-            for x, y, z in points:
-                fd.write('{} {} {}\n'.format(x, y, z))
+            for point in points:
+                x, y, z = point[0]
+                b, g, r = point[1]
+                fd.write('{} {} {} {} {} {}\n'.format(x, y, z, r, g, b))
         pass
 
     def refine_points(self, norm_pts1, norm_pts2, E):
@@ -321,7 +296,7 @@ class SingleCameraReconstruction(object):
         logging.info("Triangulating 3D sparse points")
         _, keypoints3d, _, P2 = self.triangulate_points(P1, P2s, ref_keypoints1, ref_keypoints2)
         logging.debug("{} 3D points".format(len(keypoints3d)))
-        #self.projections.append(P2)
+        self.projections.append(P2)
 
         self._track_points(keypoints3d, keypoints1, keypoints2, 0, image1, image2)
 
@@ -361,7 +336,7 @@ class SingleCameraReconstruction(object):
         _, keypoints3d, _, P2 = self.triangulate_points(P1, P2s, ref_keypoints1, ref_keypoints2)
         logging.debug("{} 3D points".format(len(keypoints3d)))
         logging.info("P2: {}".format(list(P2)))
-        #self.projections.append(P2)
+        self.projections.append(P2)
 
         self._track_points(keypoints3d, keypoints1, keypoints2, i, image1, image2)
 
@@ -376,4 +351,4 @@ def calibrated_sfm(image_files):
     for i in range(1, len(image_files) - 1):
         recon.add_image_pair(i, image_files[i], image_files[i + 1])
         recon.save_point_cloud(i, file_name='./calibrated_{:04d}_{:04d}.ply'.format(i, i+1))
-    recon.save_point_cloud(None, file_name='./calibrated.ply')
+    #recon.save_point_cloud(None, file_name='./calibrated.ply')
