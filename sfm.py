@@ -326,7 +326,7 @@ def showDepthMap(zValues, image_data, kp1):
     maxZ = max(zValues)-minZ
     for z in range(len(zValues)):
         zValues[z] -= minZ
-        zValues[z] = int(zValues[z] / maxZ * 255)
+        zValues[z] = 255-int(zValues[z] / maxZ * 255)
 
     im = image_data.copy()
     im[im > 0] = 0
