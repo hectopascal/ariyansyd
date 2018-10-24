@@ -236,8 +236,7 @@ def nearestNeighbours(target, arr):
 
 def projective_pose_estimation(feat_2D,P,points3D):
     '''
-    Method to add views using an initial 3D structure, i.e. compute the projection matrices for all the additional views (the first two are already
-    estimated in previous steps)
+    Method to add views using an initial 3D structure, i.e. compute the projection matrices for all the additional views (the first two are already estimated in previous steps)
     Args: 
             feat_2D: 2D feature coordinates for all images
             P: projection matrices
@@ -365,7 +364,8 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
     fm = FeatureMatcher(detector_type=detector_type, matcher_type=matcher_type)
 
     P = [] # list of camera matrices
-
+    points_2D = []
+    points_3D = []
     for frame_name in frame_names:
         fm.extract(frame_name)
 
@@ -395,8 +395,6 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
         
         logging.info("Estimating Projection Matrices from Fundamental Matrix")
         P1, P2, _, _ = estimate_initial_projection_matrices(F)
-        print(P1)
-        print(P2)
         # now add image 2
         image3_name = frame_names[2]
         _, descriptors3, _ = fm.extract(image3_name)
@@ -411,16 +409,15 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
 
         # find
         k1, k2 = fm.intersect_matches(image2_name, image3_name, good_matches2_3, good_matches3_2)
-        print("baaaa")
-        print(k1[0])
-        print(k2[0])
-        print("emmmm")
 
+        
         
         logging.info("Triangulating")
         points = triangulate_points(kp1_homo, kp2_homo, P1, P2, image1_data, image2_data)
-        points = np.asarray(points)
-        print(points)
+        for point in points:
+            points_3D.append(point[0])
+
+        print(points_3D)
         points_2D = [kp1_homo,kp2_homo]
         points_2D = np.asarray(points_2D)
     
@@ -428,9 +425,10 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
         print(P)
 
         points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
-    #runBA(P,points,points_2D) 
+    
+#    points_3D = np.asarray(points_3D)
+#    runBA(P,points_3D,points_2D) 
     #logging.info("Saving to PLY")    
-    points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
     #points_to_obj(points, 'uncal_{:04d}_{:04d}.obj'.format(frame1, frame2))
 
     logging.info("Done")

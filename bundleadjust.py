@@ -95,8 +95,9 @@ def readPoints(file_name):
 
 def runBA(P,points_3d,points_2d):
 
-    #camera_params, points_3d, camera_indices, point_indices, points_2d = readPoints('BApoints.txt')
-    camera_params = P
+    camera_params, points_3d, camera_indices, point_indices, points_2d = readPoints('BApoints.txt')
+    #camera_params = P
+    
 
     ### PRINTING SOME STATS ###
     n_cameras = camera_params.shape[0]
@@ -110,9 +111,9 @@ def runBA(P,points_3d,points_2d):
     print("Total number of parameters: {}".format(n))
     print("Total number of residuals: {}".format(m))
     ### PRINTING SOME STATS ###
-   
     x0 = np.hstack((camera_params.ravel(), points_3d.ravel()))
-    print(camera_params.ravel())
+    print(camera_params)
+    print(points_3d)
     f0 = fun(x0, n_cameras, n_points, camera_indices, point_indices, points_2d)
    
     plt.plot(f0)
@@ -129,18 +130,15 @@ def runBA(P,points_3d,points_2d):
     print(result)
     feat_2D = [n_cameras, n_points, camera_indices, point_indices, points_2d]
     error=np.power(sum(f0),2)
-    print("errrrrrrrrrrrrrrrrrr")
-    print(P)
-    print(X)
     #get the refined projection matrices from the optimal vector
-    for i in range(0,3):
-            P[:,:,i]=np.reshape(X[0+i*11:12+i*11],(3,4));
-            P[2,3,i]=P[2,2,i]
-            P[2,2,i]=1
+    #for i in range(1,n_cameras):
+    #        P[:,:,i]=np.reshape(X[0+i*11:12+i*11],(3,4));
+    #        P[2,3,i]=P[2,2,i]
+    #        P[2,2,i]=1
     
     #get the refined 3D coordinates from the optimal vector
-    feat3D =  numpy.zeros((n_points,4))
-    feat3D[:,0:3]=np.reshape(X[self._sequence_length*11:self._sequence_length*11+self._sequence_length*number_of_features*3],(number_of_features,3))
+    feat3D =  np.zeros((n_points,4))
+    feat3D[:,0:3]=np.reshape(X[n_cameras*11:n_cameras*11+n_cameras*n_points*3],(n_points,3))
 
     Tp1= np.vstack([P[:,:,0],[0,0,0,1]]);
     for i in range(0,self._sequence_length):
