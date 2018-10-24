@@ -280,7 +280,7 @@ class FeatureMatcher(object):
         #     for img_idx in range(img_index):
         #         print(feature, img_idx, self.complete_tracks[feature, img_idx, ])
 
-    def find_tracks(self, image_files):
+    def find_correspondences(self, image_files):
         """ Locates tracks across consecutive images i.e presence of features found across all files
 
         :param image_files: a list of filenames
@@ -288,16 +288,16 @@ class FeatureMatcher(object):
         """
         # each element in the list is a feature track ie. a list containing the coordinates it was found in
         # an image where the position in the list corresponds to the index of the image sequence
-        self.feature_tracks = {}
+        self.correspondences = {}
 
         # initialise the feature tracks
 
         for i in range(0, len(image_files) - 2):
             kpts1 = self.matches[(image_files[i], image_files[i + 1])][1]
-            kpts2 = self.matches[(image_files[i + 1], image_files[i + 2])][0]
+            kpts2 = self.matches[(image_files[i + 1], image_files[i + 2])][1]
 
             desc1 = np.array([self.features_to_descriptors[image_files[i + 1]][(kp[0], kp[1])] for kp in kpts1])
-            desc2 = np.array([self.features_to_descriptors[image_files[i + 1]][(kp[0], kp[1])] for kp in kpts2])
+            desc2 = np.array([self.features_to_descriptors[image_files[i + 2]][(kp[0], kp[1])] for kp in kpts2])
 
             matches1 = self.matcher.knnMatch(desc1, desc2, 2)
             good_matches1 = [x for x, y in matches1 if x.distance < 0.8 * y.distance]
@@ -320,7 +320,7 @@ class FeatureMatcher(object):
                 very_good_keypoints_1[idx] = np.array(pt1)
                 very_good_keypoints_2[idx] = np.array(pt2)
 
-            self.feature_tracks[(image_files[i + 1])] = (very_good_keypoints_1, very_good_keypoints_2)
+            self.correspondences[image_files[i + 1]] = (very_good_keypoints_1, very_good_keypoints_2)
 
     def process(self, files):
         image1 = None

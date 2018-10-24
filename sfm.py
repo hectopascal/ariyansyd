@@ -10,8 +10,6 @@ import scipy.linalg as linalg
 import scipy.optimize as optimize
 
 
-from calibrated import calibrated_sfm
-
 from bundleadjust import *
 from calibrated import calibrated_sfm
 from feature_matcher import FeatureMatcher
@@ -299,20 +297,20 @@ def estimate_initial_projection_matrices(F):
 
 
 def triangulate_points(kp1, kp2, P1, P2, image1_data, image2_data):
-    point_cloud = []    # TODO: convert to numpy
+    point_cloud = []
     for i in range(kp1.shape[1]):
-        pointA = [kp1[:,i][0], kp1[:,i][1]]
+        pointA = (kp1[:, i][0], kp1[:, i][1])
+        pointB = (kp2[:, i][0], kp2[:, i][1])
 
         # convert pointA back to image plane coordinates
         height1, width1, depth = image1_data.shape
         mm1 = (height1 + width1)/2
 
-        pointA[0] = int(pointA[0] * mm1 + height1)
-        pointA[1] = int(pointA[1] * mm1 + width1)
+        pointRGB = [int(pointA[0] * mm1 + height1), int(pointA[1] * mm1 + width1)]
 
-        color = image1_data[pointA[1]][pointA[0]]
-        point = triangulate_point(kp1[:, i], kp2[:, i], P1, P2)
-        point_cloud.append([point,color])
+        color = image1_data[pointRGB[1]][pointRGB[0]]
+        point = triangulate_point(pointA, pointB, P1, P2)
+        point_cloud.append([point, color])
     return point_cloud
 
 
@@ -323,18 +321,17 @@ def compute_projection(kp_2d, kp_3d):
     :param kp_3d:
     :return:
     """
-    A = np.zeros((2 * kp_2d.shape[0], 12))
-    A[::2, :4] = kp_3d
-    A[1::2, 4:8] = kp_3d
-    A[::2, 8:] = -kp_2d[:, 0, np.newaxis]*kp_3d
-    A[1::2, 8:] = -kp_2d[:, 1, np.newaxis]*kp_3d
-
-    _, _, Vh = linalg.svd(A)
-
-    P = Vh[-1, :].T.reshape((3, 4))
-    P = P//P[10]
-    # print(P)
-    return P
+    kp_2d = kp_2d.T
+    kp_3d = kp_3d.T
+    n = kp_2d.shape[1]
+    M = np.zeros((3*n, 12 + n))
+    for i in range(n):
+        M[3 * i, 0:4] = kp_3d[:, i]
+        M[3 * i + 1, 4:8] = kp_3d[:, i]
+        M[3 * i + 2, 8:12] = kp_3d[:, i]
+        M[3 * i:3 * i + 3, i + 12] = -kp_2d[:, i]
+    U, S, V = linalg.svd(M)
+    return V[-1, :12].reshape((3, 4))
 
 
 def compute_error(kp_2d, kp_3d, P):
@@ -372,6 +369,11 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
     # find features that are can be matched across all images
     fm.find_complete_tracks(frame_names)
 
+    # find overlap in features between image pairs for projective pose estimation
+    fm.find_correspondences(frame_names)
+
+    inv_point_cloud = []  # 2d points -> 3d point
+
     P = [] # list of camera matrices
 
     for i in range(0, num_frames - 1):
@@ -388,33 +390,57 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
         #keypoints2, descriptors2, _ = fm.extract(image2_name, image_data=cv2.cvtColor(image2_data, cv2.COLOR_BGR2GRAY))
 
         kp1, kp2 = fm.cross_match(image1_name, image2_name)
-        kp1 = fm.normalise(kp1.T).T
-        kp2 = fm.normalise(kp2.T).T
+        norm_kp1 = fm.normalise(kp1.T.copy()).T
+        norm_kp2 = fm.normalise(kp2.T.copy()).T
 
         logging.info("Keypoints matched: {}".format(kp1.shape[0]))
-        kp1_homo = cv2.convertPointsToHomogeneous(kp1).reshape(kp1.shape[0], 3).T
-        kp2_homo = cv2.convertPointsToHomogeneous(kp2).reshape(kp2.shape[0], 3).T
+        kp1_homo = cv2.convertPointsToHomogeneous(norm_kp1).reshape(kp1.shape[0], 3).T
+        kp2_homo = cv2.convertPointsToHomogeneous(norm_kp2).reshape(kp2.shape[0], 3).T
 
         logging.info("Estimating Fundamental Matrix from correspondences")
         F = keypoints_to_fundamental(kp1_homo, kp2_homo, optimise=True)
 
-        #if i == 0:
-        logging.info("Estimating Projection Matrices from Fundamental Matrix")
-        P1, P2, _, _ = estimate_initial_projection_matrices(F)
-        #else:
-        #    logging.info("Estimating Projection Matrices from Point Correspondences")
-        #    P1 = P[-1]
-        #    P2 = compute_projection()
-        
+        if i == 0:
+            logging.info("Estimating Projection Matrices from Fundamental Matrix")
+            P1, P2, _, _ = estimate_initial_projection_matrices(F)
+            P.append(P2)
+        else:
+            logging.info("Estimating Projection Matrices from Point Correspondences")
+
+            match_2d = []
+            last_kpts = {(x, y): n for n, (x, y) in enumerate(fm.matches[(frame_names[i-1], image1_name)][1])}
+            for (x, y) in kp1:
+                if (x, y) in last_kpts:
+                    match_2d.append((x, y))
+
+            matches = []
+            for (u, v) in match_2d:
+                if (u, v) in inv_point_cloud[i - 1][1]:
+                    x, y, z = inv_point_cloud[i - 1][1][(u, v)]
+                    matches.append(((u, v, 1), (x, y, z, 1)))
+
+            kpts_2d = np.array([pt2 for pt2, pt3 in matches], dtype='float32')
+            kpts_3d = np.array([pt3 for pt2, pt3 in matches], dtype='float32')
+
+            P2 = compute_projection(fm.normalise(kpts_2d.T).T, kpts_3d)
+            print(P2)
+            P1 = P[0]
+            P.append(P2)
+
         logging.info("Triangulating")
         points = triangulate_points(kp1_homo, kp2_homo, P1, P2, image1_data, image2_data)
-        points = np.asarray(points)
-        print(points)
-        points_2D = [kp1_homo, kp2_homo]
-        points_2D = np.asarray(points_2D)
-    
-        P = projective_pose_estimation(points_2D, P2, points)
-        print(P)
+        inv_point_cloud.append((dict(), dict()))
+        for ((x, y, z, _), _), (u1, v1), (u2, v2) in zip(points, kp1, kp2):
+            inv_point_cloud[i][0][(u1, v1)] = (x, y, z)
+            inv_point_cloud[i][1][(u2, v2)] = (x, y, z)
+
+        # points = np.asarray(points)
+        # print(points)
+        # points_2D = [kp1_homo, kp2_homo]
+        # points_2D = np.asarray(points_2D)
+        #
+        # P = projective_pose_estimation(points_2D, P2, points)
+        # print(P)
 
         points_to_ply(points, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
     #runBA(P,points,points_2D) 
