@@ -343,7 +343,7 @@ def showDepthMap(zValues, image_data, kp1):
         im[pointA[1]][pointA[0]] = (z,z,z)
 
     kSize = int(min(image_data.shape[:2])*0.025)
-    kernel = np.ones((50,50), np.uint8)
+    kernel = np.ones((kSize,kSize), np.uint8)
     im = cv2.dilate(im, kernel, iterations=1)
 
     cv2.namedWindow('DepthMap', cv2.WINDOW_NORMAL)
@@ -456,10 +456,7 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
         
         logging.info("Triangulating")
         points = triangulate_points(kp1_homo, kp2_homo, P1, P2, image1_data, image2_data)
-        for point in points:
-            points_3D.append(point[0])
-
-        print(points_3D)
+        points = np.asarray(points)
         points_2D = [kp1_homo,kp2_homo]
         points_2D = np.asarray(points_2D)
     
@@ -480,7 +477,7 @@ def get_args():
     parser.add_argument('--mode', type=str, help='calibrated or uncalibrated', default='uncalibrated')
     parser.add_argument('--source', type=str, help='source files', default='./fountain_int/[0-9]*.png')
     #parser.add_argument('--source', type=str, help='source files', default='./bird_data/images/[0-9]*.ppm')
-    #parser.add_argument('--source', type=str, help='source files', default='./zeno/*.JPG')
+    #parser.add_argument('--source', type=str, help='source files', default='./zeno/*.jpeg')
     parser.add_argument('--detector', type=str, default='SURF', help='Feature detector type')
     parser.add_argument('--matcher', type=str, default='flann', help='Matching type')
     parser.add_argument('--log_level', type=int, default=10, help='logging level (0-50)')
