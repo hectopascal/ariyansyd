@@ -300,6 +300,8 @@ def estimate_initial_projection_matrices(F):
 
 def triangulate_points(kp1, kp2, P1, P2, image1_data, image2_data):
     point_cloud = []    # TODO: convert to numpy
+
+    zValues = []
     for i in range(kp1.shape[1]):
         pointA = [kp1[:,i][0], kp1[:,i][1]]
 
@@ -312,9 +314,46 @@ def triangulate_points(kp1, kp2, P1, P2, image1_data, image2_data):
 
         color = image1_data[pointA[1]][pointA[0]]
         point = triangulate_point(kp1[:, i], kp2[:, i], P1, P2)
+        zValues.append(point[2])
         point_cloud.append([point,color])
+
+    showDepthMap(zValues, image1_data, kp1)
+    
     return point_cloud
 
+def showDepthMap(zValues, image_data, kp1):
+    # squash Z's into range [0,255]
+    minZ = min(zValues)
+    maxZ = max(zValues)-minZ
+    for z in range(len(zValues)):
+        zValues[z] -= minZ
+        zValues[z] = int(zValues[z] / maxZ * 255)
+
+    im = image_data.copy()
+    im[im > 0] = 0
+    for i in range(kp1.shape[1]):
+        pointA = [kp1[:,i][0], kp1[:,i][1]]
+
+        height1, width1, depth = image_data.shape
+        mm1 = (height1 + width1)/2
+
+        pointA[0] = int(pointA[0] * mm1 + height1)
+        pointA[1] = int(pointA[1] * mm1 + width1)
+        z = zValues[i]
+
+        im[pointA[1]][pointA[0]] = (z,z,z)
+
+    kSize = int(min(image_data.shape[:2])*0.025)
+    kernel = np.ones((50,50), np.uint8)
+    im = cv2.dilate(im, kernel, iterations=1)
+
+    cv2.namedWindow('DepthMap', cv2.WINDOW_NORMAL)
+    cv2.moveWindow("DepthMap", 20,20)
+    cv2.namedWindow('Original', cv2.WINDOW_NORMAL)
+    cv2.imshow('DepthMap', im)
+    cv2.imshow('Original', image_data)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
 def compute_projection(kp_2d, kp_3d, P):
     """ 
@@ -379,10 +418,10 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
         image1_data = cv2.imread(image1_name)
         image2_data = cv2.imread(image2_name)
 
-        keypoints1, descriptors1, _ = fm.extract(image1_name) #, image1_data=None, draw=False)
-        keypoints2, descriptors2, _ = fm.extract(image2_name) #, image2_data=None, draw=False)
+        keypoints1, descriptors1, _ = fm.extract(image1_name, draw=True) #, image1_data=None, draw=False)
+        keypoints2, descriptors2, _ = fm.extract(image2_name, draw=True) #, image2_data=None, draw=False)
 
-        kp1, kp2 = fm.cross_match(image1_name, image2_name)
+        kp1, kp2 = fm.cross_match(image1_name, image2_name, draw=True)
         kp1 = fm.normalise(kp1.T).T
         kp2 = fm.normalise(kp2.T).T
 
@@ -391,12 +430,13 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
         kp2_homo = cv2.convertPointsToHomogeneous(kp2).reshape(kp2.shape[0], 3).T
 
         logging.info("Estimating Fundamental Matrix from correspondences")
-        F = keypoints_to_fundamental(kp1_homo, kp2_homo, optimise=True)
+        #F = keypoints_to_fundamental(kp1_homo, kp2_homo, optimise=True)
+        F, mask = cv2.findFundamentalMat(kp1, kp2, cv2.FM_8POINT)
         
         logging.info("Estimating Projection Matrices from Fundamental Matrix")
         P1, P2, _, _ = estimate_initial_projection_matrices(F)
-        print(P1)
-        print(P2)
+
+        """
         # now add image 2
         image3_name = frame_names[2]
         _, descriptors3, _ = fm.extract(image3_name)
@@ -415,12 +455,12 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
         print(k1[0])
         print(k2[0])
         print("emmmm")
+        """
 
         
         logging.info("Triangulating")
         points = triangulate_points(kp1_homo, kp2_homo, P1, P2, image1_data, image2_data)
         points = np.asarray(points)
-        print(points)
         points_2D = [kp1_homo,kp2_homo]
         points_2D = np.asarray(points_2D)
     
@@ -440,7 +480,7 @@ def get_args():
     parser.add_argument('--mode', type=str, help='calibrated or uncalibrated', default='uncalibrated')
     parser.add_argument('--source', type=str, help='source files', default='./fountain_int/[0-9]*.png')
     #parser.add_argument('--source', type=str, help='source files', default='./bird_data/images/[0-9]*.ppm')
-    #parser.add_argument('--source', type=str, help='source files', default='./zeno/*.jpg')
+    #parser.add_argument('--source', type=str, help='source files', default='./zeno/*.JPG')
     parser.add_argument('--detector', type=str, default='SURF', help='Feature detector type')
     parser.add_argument('--matcher', type=str, default='flann', help='Matching type')
     parser.add_argument('--log_level', type=int, default=10, help='logging level (0-50)')
