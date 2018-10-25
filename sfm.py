@@ -193,14 +193,20 @@ def triangulate_point(kp1, kp2, P1, P2):
 
 
 def points_to_ply(points, ply_file):
+    ply_file = "test.ply"
     with open(ply_file, 'w') as fd:
         fd.write('ply\nformat ascii 1.0\nelement vertex {}\n'
                  'property float x\nproperty float y\nproperty float z\n'
                  'property uchar red\nproperty uchar green\nproperty uchar blue\n'
                  'end_header\n'.format(len(points)))
+        
         for point in points:
-            x, y, z, w = point[0]
-            b, g, r = point[1]
+            print(point)
+            x, y, z, w = point
+            b=0
+            g=0
+            r=0
+            #b, g, r = point[1]
             fd.write('{} {} {} {} {} {}\n'.format(x, y, z, r, g, b))
 """
 def points_to_obj(points, obj_file):
@@ -233,7 +239,7 @@ def nearestNeighbours(target, arr):
 """
 
 
-def projective_pose_estimation(feat_2D,P,points3D):
+def projective_pose_estimation(feat_2D,P,points3D,n_frames):
     '''
     Method to add views using an initial 3D structure, i.e. compute the projection matrices for all the additional views (the first two are already
     estimated in previous steps)
@@ -244,11 +250,13 @@ def projective_pose_estimation(feat_2D,P,points3D):
     Returns: 
             P: projection matrices for all views
     '''
+    print(feat_2D)
     number_of_features=feat_2D.shape[2]
-
+    print(feat_2D[0,0,100])
+    print(points3D)
     AA=np.zeros(shape=[2*number_of_features,12]);
 
-    for i in range(2,20): 
+    for i in range(2,n_frames): 
             for j in range(0,number_of_features):
                     AA[2*j,0:4]=points3D[j];
                     AA[2*j,8:12]=-feat_2D[i,0,j]*points3D[j]
@@ -275,46 +283,6 @@ def projective_pose_estimation(feat_2D,P,points3D):
     return P
 
 
-
-def projective_pose_estimation(feat_2D,P,points3D):
-    '''
-    Method to add views using an initial 3D structure, i.e. compute the projection matrices for all the additional views (the first two are already estimated in previous steps)
-    Args: 
-            feat_2D: 2D feature coordinates for all images
-            P: projection matrices
-            points3d: 3D point cloud
-    Returns: 
-            P: projection matrices for all views
-    '''
-    number_of_features=feat_2D.shape[2]
-
-    AA=np.zeros(shape=[2*number_of_features,12]);
-
-    for i in range(2,len(feat_2D)): 
-            for j in range(0,number_of_features):
-                    AA[2*j,0:4]=points3D[j];
-                    AA[2*j,8:12]=-feat_2D[i,0,j]*points3D[j]
-                    AA[2*j+1,4:8]=points3D[j];
-                    AA[2*j+1,8:12]=-feat_2D[i,1,j]*points3D[j]
-
-            U, s, Vh =linalg.svd(AA)
-            V=np.transpose(Vh)
-
-            VV=V[0:12,11]
-            VV=VV/VV[10]
-            VV=np.delete(VV,10)
-
-            #refine the estimate for the i-th projection matrix
-            result=least_squares(eg.refine_projection_matrix,VV, args=(points3D,feat_2D[i,:,:]))
-            VV=result.x
-
-            Pr=np.zeros(shape=[3,4]);
-            Pr[0,:]=VV[0:4]
-            Pr[1,:]=VV[4:8]
-            Pr[2,:]=np.append(np.append(VV[8:10],1),VV[10])
-            P[:,:,i]=Pr
-
-    return P
 
 
 def estimate_initial_projection_matrices(F):
@@ -406,7 +374,7 @@ def fixed_f_error(x,P,n):
 
 
 
-def self_calibration(P):
+def self_calibration(P,n_frames):
     '''
     Self calibration using the procedure described in 
     M. Pollefeys, R. Koch and L. Van Gool, "Self-Calibration and Metric Reconstruction in spite of Varying and Unknown Internal Camera Parameters", Proc. International Conference on Computer Vision, Narosa Publishing House, pp.90-95, 1998.
@@ -420,12 +388,11 @@ def self_calibration(P):
     '''
     focalLen =0 
     mm = 1000
-    n_cam = 20
     width = 1300
     height = 700
     # setup the system of equations
-    AAA=np.zeros(shape=[4*20-4,6]);
-    for i in range(0,20-1):
+    AAA=np.zeros(shape=[4*n_frames-4,6])
+    for i in range(0,n_frames-1):
             P_tmp=P[:,:,i+1]
             AAA[0+4*i,:]=[(-np.power(P_tmp[1, 1],2)+np.power(P_tmp[0, 1],2)-np.power(P_tmp[1, 0],2)+np.power(P_tmp[0, 0],2)) ,(-2*P_tmp[1, 0]*P_tmp[1, 3]+2*P_tmp[0, 0]*P_tmp[0, 3]),(-2*P_tmp[1, 1]*P_tmp[1, 3]+2*P_tmp[0, 1]*P_tmp[0, 3]),(2*P_tmp[0, 2]*P_tmp[0, 3]-2*P_tmp[1, 2]*P_tmp[1, 3]),(-np.power(P_tmp[1, 3],2)+np.power(P_tmp[0, 3],2)),(-np.power(P_tmp[1, 2],2)+np.power(P_tmp[0, 2],2))];
             AAA[1+4*i,:]=[(P_tmp[1, 0]*P_tmp[0, 0]+P_tmp[1, 1]*P_tmp[0, 1]),(P_tmp[1, 0]*P_tmp[0, 3]+P_tmp[1, 3]*P_tmp[0, 0]),(P_tmp[1, 1]*P_tmp[0, 3]+P_tmp[1, 3]*P_tmp[0, 1]),(P_tmp[1, 2]*P_tmp[0, 3]+P_tmp[1, 3]*P_tmp[0, 2]),P_tmp[1, 3]*P_tmp[0, 3],P_tmp[1, 2]*P_tmp[0, 2]];    
@@ -445,8 +412,8 @@ def self_calibration(P):
     
     print(P)
     print(np.transpose(P))
-    y=np.ones(shape=[20,1]);
-    for i in range(0,20):
+    y=np.ones(shape=[n_frames,1]);
+    for i in range(0,n_frames):
         print(P[0,:,i])
         print(P[2,:,i])
         print(W)
@@ -456,12 +423,12 @@ def self_calibration(P):
             #optimize for fixed focal lengths
             pp2=np.asarray([-b[1]/b[0],-b[2]/b[0],-b[3]]);  
             x=np.hstack((sum(y)/y.shape[0],pp2))
-            x=optimize.fmin(fixed_f_error,x,args=(P,20));
-            error=fixed_f_error(x,P,20)
+            x=optimize.fmin(fixed_f_error,x,args=(P,n_frames));
+            error=fixed_f_error(x,P,n_frames)
 
             # fill out the camera instrisic parameters.
-            K=np.zeros((3,3,20))
-            for i in range(0,20):
+            K=np.zeros((3,3,n_frames))
+            for i in range(0,n_frames):
                     K[:,:,i]=np.eye(3);
                     K[0,0,i]=x[0]*mm;
                     K[1,1,i]=x[0]*mm;
@@ -498,11 +465,11 @@ def convert_to_metric_space(Tm,feat3D,P,K):
             P: projectio matrices in metric space
     '''
     # transform the projective 3d coordinates to metric
-    n_cam = 20
+    n_cam = 6
     InvT=Tm.dot(np.eye(4));
     a=linalg.inv(InvT);
     InvT=InvT*a[3,3];
-
+    print(feat3D)
     feat3D=InvT.dot(np.transpose(feat3D))
     feat3D=np.transpose(feat3D/feat3D[3,:])	 
 
@@ -514,7 +481,7 @@ def convert_to_metric_space(Tm,feat3D,P,K):
     tmp[1,2]=700;
 
     for i in range(0,n_cam):
-        P[:,:,i]=P[:,:,i].dot(inv(InvT))
+        P[:,:,i]=P[:,:,i].dot(linalg.inv(InvT))
         P[:,:,i]=tmp.dot(P[:,:,i])
         a=linalg.det(linalg.inv(K[:,:,i]).dot(P[0:3,0:3,i]))
         P[:,:,i]=P[:,:,i]*np.sign(a)/np.power(abs(a),0.333)
@@ -608,11 +575,16 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
         points = triangulate_points(kp1_homo, kp2_homo, P1, P2, image1_data, image2_data)
         coords1_2D = np.stack((kp1_homo[0],kp1_homo[1]),axis=-1) #putting the points in (x,y) form
         coords2_2D = np.stack((kp2_homo[0],kp2_homo[1]),axis=-1) #putting the points in (x,y) form
-        points_2D = [kp1_homo,kp2_homo]
+       
+        print('bfdkafjd')
+        print(kp2_homo[0])
+        print(kp2_homo[1])
+        points_2D.append([kp2_homo[0].tolist(),kp2_homo[1].tolist()])
+        print("points")
+        print("end")
+        for k in points:
+            points_3D.append(k[0])
         
-        points_2D = np.asarray(points_2D)
-        points_3D.extend(points)
-        print(P2)
         for j in range(3):
             P[j,:,i] = P2[j]
         print(P2)
@@ -621,11 +593,18 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
     
     #P2 = projective_pose_estimation(points_2D,P2,points)
     P = np.array(P)
-    print(P)
-    P = projective_pose_estimation(points_2D,P,points_3D)
-    Tm, K,error = self_calibration(P)
+    #for i in points_3D:
+    #    points3D.append(i[0])
+    #print(points_2D)
+    #print(points3D)
+    points_3D = np.asarray(points_3D)
+    #points_2D = np.asarray(points_2D)
+        print(len(points_2D[0][0]))
+    P = projective_pose_estimation(points_2D,P,points_3D,len(frame_names))
+    Tm, K,error = self_calibration(P,len(frame_names))
     metric_3D, metric_P = convert_to_metric_space(Tm,points_3D,P,K)
     print("AAAAAAAAAAAAAAAAAAAAAAAAAAA")
+    metric_3D = metric_3D.tolist()
     points_to_ply(metric_3D, 'uncal_{:04d}_{:04d}.ply'.format(frame1, frame2))
     #runBA(P,points_3D,points_2D) 
     #logging.info("Saving to PLY")    
@@ -636,8 +615,8 @@ def uncalibrated_sfm(frame_names, detector_type, matcher_type):
 def get_args():
     parser = argparse.ArgumentParser(description='Compute fundamental matrix from image file(s)')
     parser.add_argument('--mode', type=str, help='calibrated or uncalibrated', default='uncalibrated')
-    #parser.add_argument('--source', type=str, help='source files', default='./fountain_int/[0-9]*.png')
-    parser.add_argument('--source', type=str, help='source files', default='./bird_data/images/[0-9]*.ppm')
+    parser.add_argument('--source', type=str, help='source files', default='./fountain_int/[0-9]*.png')
+    #parser.add_argument('--source', type=str, help='source files', default='./bird_data/images/[0-9]*.ppm')
     #parser.add_argument('--source', type=str, help='source files', default='./zeno/*.jpg')
     parser.add_argument('--detector', type=str, default='SURF', help='Feature detector type')
     parser.add_argument('--matcher', type=str, default='flann', help='Matching type')
