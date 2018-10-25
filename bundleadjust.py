@@ -97,8 +97,7 @@ def runBA(P,points_3d,points_2d):
 
     camera_params, points_3d, camera_indices, point_indices, points_2d = readPoints('BApoints.txt')
     #camera_params = P
-    
-
+    print(camera_params[0])
     ### PRINTING SOME STATS ###
     n_cameras = camera_params.shape[0]
     n_points = points_3d.shape[0] #number_of_features
@@ -110,7 +109,10 @@ def runBA(P,points_3d,points_2d):
     print("n_points: {}".format(n_points))
     print("Total number of parameters: {}".format(n))
     print("Total number of residuals: {}".format(m))
-    ### PRINTING SOME STATS ###
+    
+    
+    
+    
     x0 = np.hstack((camera_params.ravel(), points_3d.ravel()))
     print(camera_params)
     print(points_3d)
@@ -120,9 +122,6 @@ def runBA(P,points_3d,points_2d):
     A = bundle_adjustment_sparsity(n_cameras, n_points, camera_indices, point_indices)
 
 
-#    res = least_squares(fun, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4, method='trf',
-#                        args=(n_cameras, n_points, camera_indices, point_indices, points_2d))
-    #print(res)
 #    result=least_squares(fun,x0, max_nfev=1000,method='trf',args=(n_cameras, n_points, camera_indices, point_indices, points_2d))
     result = least_squares(fun, x0, jac_sparsity=A, verbose=2, x_scale='jac', ftol=1e-4, method='trf',
                         args=(n_cameras, n_points, camera_indices, point_indices, points_2d))
